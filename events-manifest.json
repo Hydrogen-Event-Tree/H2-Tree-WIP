@@ -1,0 +1,17 @@
+{
+  "models": [
+    {
+      "id": "qwen3.5-0.8b",
+      "name": "Qwen3.5-0.8B",
+      "events_path": "events-qwen3.5-0.8b.json",
+      "model": "qwen3.5:0.8b"
+    },
+    {
+      "id": "gemma3-1b",
+      "name": "Gemma3-1B",
+      "events_path": "events-gemma3-1b.json",
+      "model": "gemma3.5:1b"
+    }
+  ],
+  "default_model_id": "qwen3.5-0.8b"
+}
