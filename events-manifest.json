@@ -11,5 +11,6 @@
       "model": "gemma3:1b"
     }
   ],
+  "answers_per_model": 2,
   "default_model": "gpt-oss:20b"
 }

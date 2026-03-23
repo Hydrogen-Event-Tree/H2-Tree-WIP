@@ -12,7 +12,8 @@ from dashboard import run as run_dashboard
 from parse_hiad import build_event_record, read_enriched_events
 
 FILE_PATH = "HIAD.xlsx"
-COUNT = 2
+EVENTS_TO_INCLUDE = 2
+ANSWERS_PER_MODEL = 2
 DEFAULT_MAX_WORKERS = 8
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -68,6 +69,7 @@ RESPONSE_SCHEMA = {
         "exclude_no_loc",
     ],
 }
+ANSWER_FIELDS = tuple(RESPONSE_SCHEMA["properties"].keys())
 
 RESPONSE_SCHEMA_JSON = json.dumps(RESPONSE_SCHEMA, ensure_ascii=True, indent=2)
 
@@ -163,17 +165,23 @@ def _serialize_reasoning(value):
         return str(value)
 
 
-def _ask_ollama(prompt: str, system_prompt: str, model: str):
+def _ask_ollama(prompt: str, system_prompt: str, model: str, seed: int | None = None):
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
+    request_kwargs = {
+        "model": model,
+        "think": False,
+        "format": RESPONSE_SCHEMA,
+        "messages": messages,
+    }
+    if seed is not None:
+        request_kwargs["options"] = {"seed": seed}
+
     response = ollama.chat(
-        model=model,
-        think=False,
-        format=RESPONSE_SCHEMA,
-        messages=messages,
+        **request_kwargs,
     )
 
     message = response.get("message", {})
@@ -195,22 +203,28 @@ def _ask_ollama(prompt: str, system_prompt: str, model: str):
     return parsed, reasoning
 
 
-def _ask_openrouter(prompt: str, system_prompt: str, model: str):
+def _ask_openrouter(prompt: str, system_prompt: str, model: str, seed: int | None = None):
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
     client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        response_format={"type": "json_schema", "json_schema": OPENROUTER_SCHEMA},
-        extra_body={
+    request_kwargs = {
+        "model": model,
+        "messages": messages,
+        "response_format": {"type": "json_schema", "json_schema": OPENROUTER_SCHEMA},
+        "extra_body": {
             "plugins": [{"id": "response-healing"}],
             "include_reasoning": True,
             "reasoning": {"enabled": True},
-        }
+        },
+    }
+    if seed is not None:
+        request_kwargs["seed"] = seed
+
+    response = client.chat.completions.create(
+        **request_kwargs,
     )
 
     message = response.choices[0].message
@@ -239,7 +253,7 @@ def _ask_openrouter(prompt: str, system_prompt: str, model: str):
     return parsed, reasoning
 
 
-def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str):
+def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str, seed: int | None = None):
     if not GEMINI_API_KEY:
         raise ValueError("Missing GEMINI_API_KEY for Google AI Studio.")
 
@@ -249,6 +263,7 @@ def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str):
         thinkingConfig=types.ThinkingConfig(thinkingLevel=types.ThinkingLevel.HIGH),
         responseMimeType="application/json",
         responseSchema=_build_genai_response_schema(),
+        seed=seed,
     )
     contents = [
         types.Content(
@@ -266,36 +281,52 @@ def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str):
     return _parse_genai_response(response)
 
 
-def ask(prompt: str, system_prompt: str, model_config: dict):
+def ask(prompt: str, system_prompt: str, model_config: dict, seed: int | None = None):
     provider = model_config.get("provider", "ollama")
     model = model_config.get("model")
     if not model:
         raise ValueError(f"Invalid model config: {model_config!r}")
     if provider == "openrouter":
-        return _ask_openrouter(prompt=prompt, system_prompt=system_prompt, model=model)
+        return _ask_openrouter(prompt=prompt, system_prompt=system_prompt, model=model, seed=seed)
     if provider == "google-ai-studio":
-        return _ask_google_ai_studio(prompt=prompt, system_prompt=system_prompt, model=model)
+        return _ask_google_ai_studio(prompt=prompt, system_prompt=system_prompt, model=model, seed=seed)
     if provider == "ollama":
         return _ask_ollama(
             prompt=prompt,
             system_prompt=system_prompt,
             model=model,
+            seed=seed,
         )
     raise ValueError(f"Unsupported provider: {provider}")
 
-def _run_model_request(record: dict, model_config: dict):
+def _run_model_request(record: dict, model_config: dict, realization_index: int):
     result, reasoning = ask(
         prompt=record["user_prompt"],
         system_prompt=record["system_prompt"],
         model_config=model_config,
+        seed=realization_index + 1,
     )
-    record["reasoning"] = reasoning
-    record.update(result)
-    return record, result
+    return realization_index, result, reasoning
+
+
+def _initialize_event_result(record: dict):
+    result = {
+        **record,
+        "reasoning": ["" for _ in range(ANSWERS_PER_MODEL)],
+    }
+    for field in ANSWER_FIELDS:
+        result[field] = [None for _ in range(ANSWERS_PER_MODEL)]
+    return result
+
+
+def _store_realization(event_result: dict, realization_index: int, result: dict, reasoning: str):
+    event_result["reasoning"][realization_index] = reasoning
+    for field in ANSWER_FIELDS:
+        event_result[field][realization_index] = result.get(field)
 
 
 def process_events(model_config, save_path=None):
-    events = read_enriched_events(FILE_PATH, COUNT)
+    events = read_enriched_events(FILE_PATH, EVENTS_TO_INCLUDE)
     results = []
     if not isinstance(model_config, dict) or not model_config.get("model"):
         raise ValueError(f"Invalid model config: {model_config!r}")
@@ -309,16 +340,25 @@ def process_events(model_config, save_path=None):
             futures = {}
             for idx, (_, row) in enumerate(events.iterrows()):
                 record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
-                futures[executor.submit(_run_model_request, record, model_config)] = idx
+                results_by_index[idx] = _initialize_event_result(record)
+                for realization_index in range(ANSWERS_PER_MODEL):
+                    futures[
+                        executor.submit(
+                            _run_model_request,
+                            record,
+                            model_config,
+                            realization_index,
+                        )
+                    ] = (idx, realization_index)
 
             with tqdm(
-                total=len(events),
+                total=len(events) * ANSWERS_PER_MODEL,
                 desc=f"Processing events ({model_label})",
             ) as progress:
                 for future in as_completed(futures):
-                    idx = futures[future]
-                    record, _ = future.result()
-                    results_by_index[idx] = record
+                    idx, realization_index = futures[future]
+                    _, result, reasoning = future.result()
+                    _store_realization(results_by_index[idx], realization_index, result, reasoning)
                     progress.update(1)
         results = results_by_index
     else:
@@ -328,8 +368,11 @@ def process_events(model_config, save_path=None):
             desc=f"Processing events ({model_label})",
         ):
             record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
-            record, _ = _run_model_request(record, model_config)
-            results.append(record)
+            event_result = _initialize_event_result(record)
+            for realization_index in range(ANSWERS_PER_MODEL):
+                _, result, reasoning = _run_model_request(record, model_config, realization_index)
+                _store_realization(event_result, realization_index, result, reasoning)
+            results.append(event_result)
 
     if save_path is not None:
         save_events(results, path=save_path)
@@ -357,7 +400,7 @@ def save_events_manifest(model_configs, default_model=None, path="events-manifes
         }
         for model_config in model_configs
     ]
-    payload = {"models": models}
+    payload = {"models": models, "answers_per_model": ANSWERS_PER_MODEL}
     if default_model is None and model_configs:
         default_model = model_configs[0].get("model")
     if default_model is not None:

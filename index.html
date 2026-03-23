@@ -1181,26 +1181,89 @@
     .compare-body p:last-child {
       margin-bottom: 0;
     }
-    .model-data-row {
+    .model-button-group {
       display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding: 8px 10px;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .model-button {
       border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--badge-bg);
-    }
-    .model-data-select {
-      width: 100%;
-    }
-    .about-model-select {
       background: var(--card);
       color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: var(--title-font);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .model-button.active {
+      background: var(--active-bg);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .reasoning-box {
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      gap: 12px;
+    }
+    .reasoning-entry {
+      display: grid;
+      gap: 6px;
+    }
+    .reasoning-entry-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .reasoning-box pre {
+      margin: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+    .hover-detail {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .hover-detail-trigger {
+      border-bottom: 1px dotted var(--accent);
+      cursor: default;
+    }
+    .hover-detail-popup {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      z-index: 25;
+      display: none;
+      min-width: 220px;
+      max-width: 320px;
+      padding: 8px;
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 10px;
-      font-family: "IBM Plex Mono", monospace;
+      background: var(--card);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+    }
+    .hover-detail:hover .hover-detail-popup,
+    .hover-detail:focus-within .hover-detail-popup {
+      display: block;
+    }
+    .hover-detail-table {
+      margin-top: 0;
       font-size: 12px;
+    }
+    .hover-detail-table th,
+    .hover-detail-table td {
+      padding: 6px 8px;
+      white-space: nowrap;
     }
     .about-body a {
       color: var(--accent);
@@ -1372,13 +1435,8 @@
               </div>
             </div>
             <div class="control-block">
-              <div class="control-label">Model data</div>
-              <div class="model-data-row">
-                <select class="about-model-select model-data-select js-model-select" aria-label="Select model dataset">
-                  <option value="">Loading...</option>
-                </select>
-                <button class="text-link-button" id="compareModelsButton" type="button">Compare models</button>
-              </div>
+              <div class="control-label">Model comparison</div>
+              <button class="text-link-button" id="compareModelsButton" type="button">Compare models</button>
             </div>
             <div class="controls-disclaimer">
               Probabilities reflect HIAD responses, not real-world frequencies. Under-reporting or data gaps may make some accident types appear rarer/more frequent here than they are in reality.
@@ -1412,7 +1470,7 @@
       </div>
       <div class="about-body">
         <p>
-          This dashboard is fully based the data from <a href="https://minerva.jrc.ec.europa.eu/en/shorturl/capri/hiadpt" target="_blank">HIAD 2.1</a>, developed by the Joint Research Centre (JRC) of the European Commission, however they are not responsible for any of the data as displayed on this website and have not been involved in the production of the dashboard. We are thankful for their contributions and hope that this dashboard can help make their data even more accessible.
+          This dashboard is fully based the data from <a href="https://minerva.jrc.ec.europa.eu/en/shorturl/capri/hiadpt" target="_blank">HIAD 2.2</a>, developed by the Joint Research Centre (JRC) of the European Commission, however they are not responsible for any of the data as displayed on this website and have not been involved in the production of the dashboard. We are thankful for their contributions and hope that this dashboard can help make their data even more accessible.
         </p>
         <p>
           On the website, we have attempted to make it clear that the "Model Answers" which underpin the event tree is based on the output of a large language model (LLM) asked to classify the events in HIAD. This approach, like any, is imperfect but we have attempted to counteract this by, e.g., incorporating notions of certainty in model answers.
@@ -1718,6 +1776,15 @@
     ];
 
     const TREE_DEFINITION = { decisions: TREE_DECISIONS, leaves: TREE_LEAVES, columns: TREE_COLUMNS };
+    const BOOLEAN_FIELDS = [
+      ...QUESTIONS.map(({ key }) => key),
+      "barrier_stopped_immediate_ignition",
+      "barrier_stopped_delayed_ignition",
+      "exclude_not_pure_h2",
+      "exclude_not_gaseous_h2",
+      "exclude_no_loc",
+    ];
+    const CONFIDENCE_FIELDS = QUESTIONS.map(({ key }) => `${key}_confidence`);
 
     function escapeHtml(str) {
       if (str === null || str === undefined) return "";
@@ -1729,12 +1796,219 @@
         .replace(/'/g, "&#39;");
     }
 
+    function ensureArray(value) {
+      if (Array.isArray(value)) return value;
+      if (value === undefined || value === null) return [];
+      return [value];
+    }
+
+    function isAggregatedEvent(ev) {
+      return !!(ev && Array.isArray(ev.modelRecords));
+    }
+
+    function getModelRecord(ev, modelId = activeModelId) {
+      if (!ev) return null;
+      if (!isAggregatedEvent(ev)) return ev;
+      return ev.recordsByModelId?.[modelId] || ev.modelRecords?.[0]?.record || null;
+    }
+
+    function getRealizationCount(record) {
+      if (!record || typeof record !== "object") return 0;
+      const candidateLengths = [
+        ensureArray(record.reasoning).length,
+        ...BOOLEAN_FIELDS.map((key) => ensureArray(record[key]).length),
+        ...CONFIDENCE_FIELDS.map((key) => ensureArray(record[key]).length),
+      ];
+      return Math.max(0, ...candidateLengths);
+    }
+
+    function projectRecordRealization(record, realizationIndex = 0) {
+      if (!record) return null;
+      const projected = {
+        event_id: record.event_id,
+        title: record.title,
+        description: record.description,
+        user_prompt: record.user_prompt,
+        system_prompt: record.system_prompt,
+        model: record.model,
+        model_name: record.model_name,
+        reasoning: ensureArray(record.reasoning)[realizationIndex] || "",
+      };
+      [...BOOLEAN_FIELDS, ...CONFIDENCE_FIELDS].forEach((key) => {
+        projected[key] = ensureArray(record[key])[realizationIndex];
+      });
+      return projected;
+    }
+
+    function getTreeProjection(ev, modelId = activeModelId) {
+      return projectRecordRealization(getModelRecord(ev, modelId), 0);
+    }
+
+    function getTreeEventsFromData(events, modelId = activeModelId) {
+      return (events || [])
+        .map((ev) => {
+          if (isAggregatedEvent(ev)) return getTreeProjection(ev, modelId);
+          return projectRecordRealization(ev, 0);
+        })
+        .filter((ev) => ev && shouldIncludeEvent(ev));
+    }
+
+    function getAllRealizationProjections(ev) {
+      if (!isAggregatedEvent(ev)) {
+        const count = getRealizationCount(ev);
+        return Array.from({ length: count }, (_, index) => ({
+          modelId: ev.model || "model",
+          modelName: ev.model_name || ev.model || "model",
+          realization: index + 1,
+          projected: projectRecordRealization(ev, index),
+        })).filter((entry) => entry.projected);
+      }
+      return (ev.modelRecords || []).flatMap(({ modelId, modelName, record }) => {
+        const count = getRealizationCount(record);
+        return Array.from({ length: count }, (_, index) => ({
+          modelId,
+          modelName: modelName || record.model_name || modelId,
+          realization: index + 1,
+          projected: projectRecordRealization(record, index),
+        })).filter((entry) => entry.projected);
+      });
+    }
+
+    function getFlattenedFieldEntries(ev, key) {
+      if (!ev) return [];
+      if (!isAggregatedEvent(ev)) {
+        return ensureArray(ev[key]).map((value, index) => ({
+          modelId: ev.model || "model",
+          modelName: ev.model_name || ev.model || "model",
+          realization: index + 1,
+          value,
+        }));
+      }
+      return (ev.modelRecords || []).flatMap(({ modelId, modelName, record }) =>
+        ensureArray(record[key]).map((value, index) => ({
+          modelId,
+          modelName: modelName || record.model_name || modelId,
+          realization: index + 1,
+          value,
+        }))
+      );
+    }
+
+    function averageNumbers(values) {
+      const nums = values
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+      if (!nums.length) return null;
+      return nums.reduce((sum, value) => sum + value, 0) / nums.length;
+    }
+
+    function averageBooleans(values) {
+      const bools = values.filter((value) => typeof value === "boolean");
+      if (!bools.length) return null;
+      return bools.reduce((sum, value) => sum + (value ? 1 : 0), 0) / bools.length;
+    }
+
+    function mostCommonValue(values) {
+      const counts = new Map();
+      let bestValue = null;
+      let bestCount = -1;
+      values.forEach((value) => {
+        if (value === undefined || value === null || value === "") return;
+        const nextCount = (counts.get(value) || 0) + 1;
+        counts.set(value, nextCount);
+        if (nextCount > bestCount) {
+          bestValue = value;
+          bestCount = nextCount;
+        }
+      });
+      return bestValue;
+    }
+
+    function formatBooleanAnswer(value) {
+      return value === true ? "Yes" : value === false ? "No" : "Unknown";
+    }
+
+    function formatAverageBoolean(value) {
+      if (!Number.isFinite(value)) return "—";
+      return `${(value * 100).toFixed(1)}% Yes`;
+    }
+
+    function formatAverageConfidence(value) {
+      if (!Number.isFinite(value)) return "—";
+      return `${value.toFixed(1)}/10`;
+    }
+
+    function getAggregateOutcome(ev) {
+      const outcomes = getAllRealizationProjections(ev)
+        .map(({ projected }) => inferOutcome(projected))
+        .filter(Boolean);
+      return mostCommonValue(outcomes) || "";
+    }
+
+    function getAggregateStatus(ev) {
+      const statuses = getAllRealizationProjections(ev).map(({ projected }) =>
+        isExcludedProjected(projected) ? "Excluded" : "Included"
+      );
+      return mostCommonValue(statuses) || "Included";
+    }
+
+    function buildAggregatedEvents(modelPayloads) {
+      const orderedKeys = [];
+      const eventsByKey = new Map();
+
+      modelPayloads.forEach(({ model, events }) => {
+        (events || []).forEach((record, index) => {
+          const keyBase = record?.event_id ?? index;
+          const key = `event:${keyBase}`;
+          let aggregate = eventsByKey.get(key);
+          if (!aggregate) {
+            aggregate = {
+              event_id: record?.event_id,
+              title: record?.title,
+              description: record?.description,
+              user_prompt: record?.user_prompt,
+              system_prompt: record?.system_prompt,
+              modelRecords: [],
+              recordsByModelId: {},
+            };
+            eventsByKey.set(key, aggregate);
+            orderedKeys.push(key);
+          }
+
+          if (!aggregate.event_id && record?.event_id) aggregate.event_id = record.event_id;
+          if (!aggregate.title && record?.title) aggregate.title = record.title;
+          if (!aggregate.description && record?.description) aggregate.description = record.description;
+          if (!aggregate.user_prompt && record?.user_prompt) aggregate.user_prompt = record.user_prompt;
+          if (!aggregate.system_prompt && record?.system_prompt) aggregate.system_prompt = record.system_prompt;
+
+          aggregate.modelRecords.push({
+            modelId: model.id,
+            modelName: model.name || record?.model_name || model.id,
+            record,
+          });
+          aggregate.recordsByModelId[model.id] = record;
+        });
+      });
+
+      return orderedKeys.map((key) => eventsByKey.get(key));
+    }
+
     function barrierImmediate(ev) {
       return ev.barrier_stopped_immediate_ignition === true;
     }
 
     function barrierDelayed(ev) {
       return ev.barrier_stopped_delayed_ignition === true && ev.immediate_ignition !== true;
+    }
+
+    function isExcludedProjected(ev) {
+      return !!(
+        ev.exclude_not_pure_h2 ||
+        ev.exclude_not_gaseous_h2 ||
+        ev.exclude_no_loc ||
+        barrierImmediate(ev) ||
+        barrierDelayed(ev)
+      );
     }
 
     function shouldIncludeEvent(ev) {
@@ -1751,9 +2025,11 @@
     }
 
     function shouldShowInList(ev) {
+      const treeEvent = getTreeProjection(ev);
+      if (!treeEvent) return false;
       if (!isTreeFilterActive()) return true;
-      if (!matchesConditions(ev, activeTreeFilter)) return false;
-      return shouldIncludeEvent(ev);
+      if (!matchesConditions(treeEvent, activeTreeFilter)) return false;
+      return shouldIncludeEvent(treeEvent);
     }
 
     function sortedItems() {
@@ -1761,16 +2037,8 @@
         .map((ev, idx) => ({ ev, idx }))
         .filter(({ ev }) => shouldShowInList(ev));
       items.sort((a, b) => {
-        const aExcluded = !!(
-          a.ev.exclude_not_pure_h2 ||
-          a.ev.exclude_not_gaseous_h2 ||
-          a.ev.exclude_no_loc
-        );
-        const bExcluded = !!(
-          b.ev.exclude_not_pure_h2 ||
-          b.ev.exclude_not_gaseous_h2 ||
-          b.ev.exclude_no_loc
-        );
+        const aExcluded = getAggregateStatus(a.ev) === "Excluded";
+        const bExcluded = getAggregateStatus(b.ev) === "Excluded";
         if (sortMode === "include") {
           if (aExcluded !== bExcluded) return aExcluded ? 1 : -1;
         } else if (sortMode === "exclude") {
@@ -1823,13 +2091,9 @@
         div.className = "event";
         div.dataset.index = idx;
         const title = escapeHtml(ev.title || "Untitled Event");
-        const excluded = !!(
-          ev.exclude_not_pure_h2 ||
-          ev.exclude_not_gaseous_h2 ||
-          ev.exclude_no_loc
-        );
+        const excluded = getAggregateStatus(ev) === "Excluded";
         const statusDot = excluded ? "status-dot excluded" : "status-dot included";
-        const outcome = escapeHtml(ev.outcome || inferOutcome(ev) || "Unknown");
+        const outcome = escapeHtml(getAggregateOutcome(ev) || "Unknown");
         const answers = '<span class="metric">Outcome: ' + outcome + "</span>";
         div.innerHTML = `
           <span class="${statusDot}" aria-label="${excluded ? "Excluded" : "Included"}"></span>
@@ -1893,6 +2157,76 @@
       refreshList({ ensureSelection: true });
     }
 
+    function renderHoverDetail(displayText, entries, valueLabel, formatter) {
+      if (!entries.length) return escapeHtml(displayText);
+      const rows = entries.map((entry) => `
+        <tr>
+          <td>${escapeHtml(entry.modelName || entry.modelId || "Model")}</td>
+          <td>${escapeHtml(String(entry.realization))}</td>
+          <td>${escapeHtml(formatter(entry.value))}</td>
+        </tr>
+      `).join("");
+      return `
+        <span class="hover-detail">
+          <span class="hover-detail-trigger">${escapeHtml(displayText)}</span>
+          <span class="hover-detail-popup">
+            <table class="hover-detail-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>#</th>
+                  <th>${escapeHtml(valueLabel)}</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </span>
+        </span>
+      `;
+    }
+
+    function renderModelButtonGroup() {
+      if (!availableModels.length) return "";
+      return `
+        <div class="model-button-group">
+          ${availableModels.map((model) => `
+            <button
+              class="model-button js-model-button${model.id === activeModelId ? " active" : ""}"
+              type="button"
+              data-model-id="${escapeHtml(model.id)}"
+            >${escapeHtml(model.name || model.id)}</button>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderReasoningTrace(ev) {
+      const record = getModelRecord(ev, activeModelId);
+      if (!record) {
+        return `
+          ${renderModelButtonGroup()}
+          <div class="reasoning-box">
+            <pre>No reasoning trace captured for the selected model.</pre>
+          </div>
+        `;
+      }
+
+      const reasoningEntries = ensureArray(record.reasoning);
+      const content = reasoningEntries.length
+        ? reasoningEntries.map((reasoning, index) => `
+            <div class="reasoning-entry">
+              <div class="reasoning-entry-label">Realization ${index + 1}</div>
+              <pre>${escapeHtml(reasoning || "No reasoning trace captured.")}</pre>
+            </div>
+          `).join("")
+        : '<pre>No reasoning trace captured.</pre>';
+
+      return `
+        ${renderModelButtonGroup()}
+        <div class="reasoning-box">${content}</div>
+      `;
+    }
+
     function renderAnswers(ev) {
       const colgroup = `
         <col class="col-key" />
@@ -1900,28 +2234,54 @@
         <col class="col-conf" />
       `;
       const qa = QUESTIONS.map(({ key, long }) => {
-        const val = ev[key];
-        const conf = ev[`${key}_confidence`];
-        const value = val === true ? "Yes" : val === false ? "No" : "Unknown";
-        const confidence = (conf === undefined || conf === null) ? "—" : conf;
-        return `<tr><th>${escapeHtml(long)}</th><td>${escapeHtml(value)}</td><td>${escapeHtml(confidence)}/10</td></tr>`;
+        const valueEntries = getFlattenedFieldEntries(ev, key).filter((entry) => typeof entry.value === "boolean");
+        const confidenceEntries = getFlattenedFieldEntries(ev, `${key}_confidence`)
+          .map((entry) => ({ ...entry, value: Number(entry.value) }))
+          .filter((entry) => Number.isFinite(entry.value));
+        const valueAverage = averageBooleans(valueEntries.map((entry) => entry.value));
+        const confidenceAverage = averageNumbers(confidenceEntries.map((entry) => entry.value));
+        const valueCell = renderHoverDetail(
+          formatAverageBoolean(valueAverage),
+          valueEntries,
+          "Value",
+          formatBooleanAnswer
+        );
+        const confidenceCell = renderHoverDetail(
+          formatAverageConfidence(confidenceAverage),
+          confidenceEntries,
+          "Confidence",
+          (value) => `${Number(value).toFixed(1)}/10`
+        );
+        return `<tr><th>${escapeHtml(long)}</th><td>${valueCell}</td><td>${confidenceCell}</td></tr>`;
       }).join("");
       const barriers = [
         ["barrier_stopped_immediate_ignition", "Barrier stopped immediate ignition"],
         ["barrier_stopped_delayed_ignition", "Barrier stopped delayed ignition"],
       ].map(([key, label]) => {
-        const val = ev[key];
-        const value = val === true ? "Yes" : val === false ? "No" : "Unknown";
-        return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td><td>—</td></tr>`;
+        const valueEntries = getFlattenedFieldEntries(ev, key).filter((entry) => typeof entry.value === "boolean");
+        const valueAverage = averageBooleans(valueEntries.map((entry) => entry.value));
+        const valueCell = renderHoverDetail(
+          formatAverageBoolean(valueAverage),
+          valueEntries,
+          "Value",
+          formatBooleanAnswer
+        );
+        return `<tr><th>${escapeHtml(label)}</th><td>${valueCell}</td><td>—</td></tr>`;
       }).join("");
       const exclusions = [
         ["exclude_not_pure_h2", "Not pure H2"],
         ["exclude_not_gaseous_h2", "Not gaseous H2"],
         ["exclude_no_loc", "No loss of containment"],
       ].map(([key, label]) => {
-        const val = ev[key];
-        const value = val === true ? "Yes" : val === false ? "No" : "Unknown";
-        return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td><td>—</td></tr>`;
+        const valueEntries = getFlattenedFieldEntries(ev, key).filter((entry) => typeof entry.value === "boolean");
+        const valueAverage = averageBooleans(valueEntries.map((entry) => entry.value));
+        const valueCell = renderHoverDetail(
+          formatAverageBoolean(valueAverage),
+          valueEntries,
+          "Value",
+          formatBooleanAnswer
+        );
+        return `<tr><th>${escapeHtml(label)}</th><td>${valueCell}</td><td>—</td></tr>`;
       }).join("");
       return `
         <div class="answers-block">
@@ -1933,7 +2293,7 @@
           </table>
         </div>
         <div class="answers-block">
-          <div class="answers-title">BARRIERS</div>
+          <div class="answers-title">Barriers</div>
           <table class="answer-table">
             <colgroup>${colgroup}</colgroup>
             <thead><tr><th>Barrier</th><th>Value</th><th></th></tr></thead>
@@ -2257,20 +2617,19 @@
     }
 
     function getTreeEvents() {
-      return getTreeEventsFromData(eventsData);
-    }
-
-    function getTreeEventsFromData(events) {
-      return events.filter((ev) => shouldIncludeEvent(ev));
+      return getTreeEventsFromData(eventsData, activeModelId);
     }
 
     function computeEventCounts() {
-      const total = eventsData.length;
-      const notPureH2 = eventsData.filter((ev) => ev.exclude_not_pure_h2).length;
-      const notGaseousH2 = eventsData.filter((ev) => ev.exclude_not_gaseous_h2).length;
-      const noLoc = eventsData.filter((ev) => ev.exclude_no_loc).length;
-      const barrierImmediateCount = eventsData.filter((ev) => barrierImmediate(ev)).length;
-      const barrierDelayedCount = eventsData.filter((ev) => barrierDelayed(ev)).length;
+      const treeEvents = eventsData
+        .map((ev) => getTreeProjection(ev, activeModelId))
+        .filter(Boolean);
+      const total = treeEvents.length;
+      const notPureH2 = treeEvents.filter((ev) => ev.exclude_not_pure_h2).length;
+      const notGaseousH2 = treeEvents.filter((ev) => ev.exclude_not_gaseous_h2).length;
+      const noLoc = treeEvents.filter((ev) => ev.exclude_no_loc).length;
+      const barrierImmediateCount = treeEvents.filter((ev) => barrierImmediate(ev)).length;
+      const barrierDelayedCount = treeEvents.filter((ev) => barrierDelayed(ev)).length;
       return { total, notPureH2, notGaseousH2, noLoc, barrierImmediateCount, barrierDelayedCount };
     }
 
@@ -3079,17 +3438,12 @@
       const ev = eventsData[idx];
       if (!ev) return;
       const details = document.getElementById("details");
-      const model = escapeHtml(ev.model || "unknown");
-      const outcome = escapeHtml(ev.outcome || inferOutcome(ev) || "");
-      const sys = escapeHtml(ev.system_prompt || "N/A");
-      const userPrompt = escapeHtml(ev.user_prompt || "No prompt captured.");
-      const reasoning = escapeHtml(ev.reasoning || "No reasoning trace captured.");
+      const selectedRecord = getModelRecord(ev, activeModelId);
+      const outcome = escapeHtml(getAggregateOutcome(ev) || "");
+      const sys = escapeHtml(selectedRecord?.system_prompt || ev.system_prompt || "N/A");
+      const userPrompt = escapeHtml(selectedRecord?.user_prompt || ev.user_prompt || "No prompt captured.");
       const description = escapeHtml(ev.description || "No description available.");
-      const excluded = !!(
-        ev.exclude_not_pure_h2 ||
-        ev.exclude_not_gaseous_h2 ||
-        ev.exclude_no_loc
-      );
+      const excluded = getAggregateStatus(ev) === "Excluded";
       const statusClass = excluded ? "badge bad" : "badge good";
       details.classList.remove("muted", "empty-state");
       details.innerHTML = `
@@ -3101,18 +3455,9 @@
           </div>
           <div class="pill">Event ID: <span class="pill-value">${escapeHtml(ev.event_id || "N/A")}</span></div>
           ${outcome ? `<div class="pill">Outcome: <span class="pill-value">${outcome}</span></div>` : ""}
-          <div class="pill">Model: <span class="pill-value">${model}</span></div>
           <div class="card-section">
             <h2>Event Description</h2>
             <pre>${description}</pre>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Model data</h2>
-          <div class="model-data-row">
-            <select class="about-model-select model-data-select js-model-select" aria-label="Select model dataset">
-              <option value="">Loading...</option>
-            </select>
           </div>
         </div>
         <div class="card">
@@ -3129,11 +3474,9 @@
         </div>
         <div class="card">
           <h2>Reasoning Trace</h2>
-          <pre>${reasoning}</pre>
+          ${renderReasoningTrace(ev)}
         </div>
       `;
-      updateModelSelect();
-      updateModelMeta();
       if (prev !== idx) {
         details.classList.remove("details-animate");
         // Force reflow so the animation restarts on each selection.
@@ -3258,61 +3601,24 @@
       return availableModels.length ? availableModels[0].id : null;
     }
 
-    function updateModelSelect() {
-      const selects = document.querySelectorAll(".js-model-select");
+    function updateModelControls() {
       const compareButton = document.getElementById("compareModelsButton");
-      if (!selects.length) return;
-      selects.forEach((select) => {
-        select.innerHTML = "";
-        if (!availableModels.length) {
-          const option = document.createElement("option");
-          option.value = "";
-          option.textContent = "No models available";
-          select.appendChild(option);
-          select.disabled = true;
-          return;
-        }
-        availableModels.forEach((model) => {
-          const option = document.createElement("option");
-          option.value = model.id;
-          option.textContent = model.name || model.id;
-          select.appendChild(option);
-        });
-        select.disabled = availableModels.length <= 1;
-        if (activeModelId) select.value = activeModelId;
-      });
       if (compareButton) {
         compareButton.disabled = availableModels.length < 2;
       }
     }
 
-    function updateModelMeta() {
-      const metas = document.querySelectorAll(".js-model-meta");
-      if (!metas.length) return;
-      const model = availableModels.find((item) => item.id === activeModelId);
-      if (!model) {
-        metas.forEach((meta) => {
-          meta.textContent = "No model selected.";
-        });
-        return;
-      }
-      const name = model.name || model.id || "Unknown model";
-      const engine = model.model ? ` (${model.model})` : "";
-      const eventsPath = model.events_path || "events.json";
-      metas.forEach((meta) => {
-        meta.textContent = `Active dataset: ${name}${engine}. Source: ${eventsPath}`;
-      });
-    }
-
-    async function loadEventsFromPath(path, { preferredEventId = null, preferredIndex = null } = {}) {
+    async function loadAllEvents({ preferredEventId = null, preferredIndex = null } = {}) {
       try {
-        const response = await fetch(path, { cache: "no-cache" });
-        if (!response.ok) throw new Error(`Failed to load events: ${response.statusText}`);
-        eventsData = await response.json();
-        if (!Array.isArray(eventsData)) throw new Error(`${path} is not an array`);
-        modelEventsCache.set(path, eventsData);
+        const modelPayloads = await Promise.all(
+          availableModels.map(async (model) => ({
+            model,
+            events: await loadModelEventsForComparison(model),
+          }))
+        );
+        eventsData = buildAggregatedEvents(modelPayloads);
         if (eventsData.length === 0) {
-          setEmptyState(`No events found in ${path}.`);
+          setEmptyState("No events found in the loaded model datasets.");
           return;
         }
         let nextSelection = null;
@@ -3334,7 +3640,7 @@
         updateTree();
       } catch (err) {
         console.error(err);
-        setEmptyState(`Unable to load ${path}. Check the server output for details.`);
+        setEmptyState("Unable to load one or more model datasets. Check the server output for details.");
       }
     }
 
@@ -3348,12 +3654,13 @@
       if (persist) {
         localStorage.setItem("hiad-model", model.id);
       }
-      updateModelSelect();
-      updateModelMeta();
+      updateModelControls();
       activeTreeFilter = null;
-      const preferredEventId = eventsData[selectedIndex]?.event_id ?? null;
-      const preferredIndex = selectedIndex;
-      await loadEventsFromPath(model.events_path, { preferredEventId, preferredIndex });
+      refreshList({ ensureSelection: true });
+      if (selectedIndex !== null && eventsData[selectedIndex]) {
+        selectEvent(selectedIndex);
+      }
+      updateTree();
     }
 
     const listOverlayQuery = window.matchMedia("(max-width: 550px)");
@@ -3435,12 +3742,14 @@
         if (!availableModels.length) throw new Error("No models listed in manifest.");
         const preferredId = resolvePreferredModelId();
         if (!preferredId) throw new Error("No default model available.");
+        activeModelId = preferredId;
+        updateModelControls();
+        await loadAllEvents();
         await applyModelSelection(preferredId, { persist: false });
       } catch (err) {
         console.error(err);
         setEmptyState("Unable to load events-manifest.json. Check the server output for details.");
-        updateModelSelect();
-        updateModelMeta();
+        updateModelControls();
       }
     }
 
@@ -3483,10 +3792,10 @@
           setCompareOpen(false);
         });
       }
-      document.addEventListener("change", (event) => {
-        const select = event.target.closest(".js-model-select");
-        if (!select) return;
-        const nextId = select.value;
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest(".js-model-button");
+        if (!button) return;
+        const nextId = button.dataset.modelId;
         if (!nextId || nextId === activeModelId) return;
         applyModelSelection(nextId);
       });

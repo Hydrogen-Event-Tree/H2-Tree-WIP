@@ -7,20 +7,62 @@
     "system_prompt": "Fill every field in the JSON schema. For each question not about barriers or exclusion, provide a boolean answer and an integer confidence from 0-10 (0 = no information in the description to decide; 10 = the description makes the chosen answer unquestionably clear). Schema: {continuous_release:boolean, continuous_release_confidence:int, immediate_ignition:boolean, immediate_ignition_confidence:int, barrier_stopped_immediate_ignition:boolean, delayed_ignition:boolean, delayed_ignition_confidence:int, barrier_stopped_delayed_ignition:boolean, confined_space:boolean, confined_space_confidence:int, exclude_not_pure_h2:boolean, exclude_not_gaseous_h2:boolean, exclude_no_loc:boolean}. Use the provided event details to decide.\n\nContinuous release rubric: Mark true if hydrogen release persisted over time rather than a single brief discharge.\nImmediate ignition rubric: Mark true if ignition occurred at the moment of release or within seconds without delay or hydrogen accumulation in the surrounding environment.\nDelayed ignition rubric: Mark true if a flammable cloud or explosive mixture formed and ignited after a noticeable delay from the release.\nBarrier (immediate) rubric: If immediate_ignition is true, barrier_stopped_immediate_ignition must be false. If immediate_ignition is false, set barrier_stopped_immediate_ignition to true only when a barrier meaningfully prevented immediate ignition (e.g., ESD systems, isolation valves, emergency shutdowns); otherwise set it to false.\nBarrier (delayed) rubric: If delayed_ignition is true, barrier_stopped_delayed_ignition must be false. If delayed_ignition is false, set barrier_stopped_delayed_ignition to true only when a barrier meaningfully prevented delayed ignition (e.g., ESD, inerting, venting, isolation); otherwise set it to false.\nConfined space rubric: Mark true if the release occurred in an enclosed or poorly ventilated area that limits dispersion.\nExclude not pure H2 rubric: Mark true if the release substance is a hydrogen mixture with significant non-hydrogen components or is not primarily hydrogen.\nExclude not gaseous H2 rubric: Mark true if hydrogen was released in a non-gaseous state (e.g., liquid or solid hydrogen) or the release medium is not gaseous H2.\nExclude no LOC rubric: Mark true when no hydrogen was released; set false if any amount of hydrogen actually leaked.\n",
     "model": "gemma3:1b",
     "model_name": "Gemma3-1B",
-    "reasoning": "",
-    "continuous_release": true,
-    "continuous_release_confidence": 9,
-    "immediate_ignition": true,
-    "immediate_ignition_confidence": 9,
-    "barrier_stopped_immediate_ignition": true,
-    "delayed_ignition": true,
-    "delayed_ignition_confidence": 9,
-    "barrier_stopped_delayed_ignition": true,
-    "confined_space": true,
-    "confined_space_confidence": 9,
-    "exclude_not_pure_h2": true,
-    "exclude_not_gaseous_h2": true,
-    "exclude_no_loc": true
+    "reasoning": [
+      "",
+      ""
+    ],
+    "continuous_release": [
+      true,
+      true
+    ],
+    "continuous_release_confidence": [
+      9,
+      9
+    ],
+    "immediate_ignition": [
+      true,
+      true
+    ],
+    "immediate_ignition_confidence": [
+      9,
+      9
+    ],
+    "barrier_stopped_immediate_ignition": [
+      true,
+      true
+    ],
+    "delayed_ignition": [
+      false,
+      false
+    ],
+    "delayed_ignition_confidence": [
+      8,
+      8
+    ],
+    "barrier_stopped_delayed_ignition": [
+      true,
+      true
+    ],
+    "confined_space": [
+      true,
+      true
+    ],
+    "confined_space_confidence": [
+      9,
+      9
+    ],
+    "exclude_not_pure_h2": [
+      true,
+      true
+    ],
+    "exclude_not_gaseous_h2": [
+      true,
+      true
+    ],
+    "exclude_no_loc": [
+      true,
+      true
+    ]
   },
   {
     "event_id": "11",
@@ -30,19 +72,61 @@
     "system_prompt": "Fill every field in the JSON schema. For each question not about barriers or exclusion, provide a boolean answer and an integer confidence from 0-10 (0 = no information in the description to decide; 10 = the description makes the chosen answer unquestionably clear). Schema: {continuous_release:boolean, continuous_release_confidence:int, immediate_ignition:boolean, immediate_ignition_confidence:int, barrier_stopped_immediate_ignition:boolean, delayed_ignition:boolean, delayed_ignition_confidence:int, barrier_stopped_delayed_ignition:boolean, confined_space:boolean, confined_space_confidence:int, exclude_not_pure_h2:boolean, exclude_not_gaseous_h2:boolean, exclude_no_loc:boolean}. Use the provided event details to decide.\n\nContinuous release rubric: Mark true if hydrogen release persisted over time rather than a single brief discharge.\nImmediate ignition rubric: Mark true if ignition occurred at the moment of release or within seconds without delay or hydrogen accumulation in the surrounding environment.\nDelayed ignition rubric: Mark true if a flammable cloud or explosive mixture formed and ignited after a noticeable delay from the release.\nBarrier (immediate) rubric: If immediate_ignition is true, barrier_stopped_immediate_ignition must be false. If immediate_ignition is false, set barrier_stopped_immediate_ignition to true only when a barrier meaningfully prevented immediate ignition (e.g., ESD systems, isolation valves, emergency shutdowns); otherwise set it to false.\nBarrier (delayed) rubric: If delayed_ignition is true, barrier_stopped_delayed_ignition must be false. If delayed_ignition is false, set barrier_stopped_delayed_ignition to true only when a barrier meaningfully prevented delayed ignition (e.g., ESD, inerting, venting, isolation); otherwise set it to false.\nConfined space rubric: Mark true if the release occurred in an enclosed or poorly ventilated area that limits dispersion.\nExclude not pure H2 rubric: Mark true if the release substance is a hydrogen mixture with significant non-hydrogen components or is not primarily hydrogen.\nExclude not gaseous H2 rubric: Mark true if hydrogen was released in a non-gaseous state (e.g., liquid or solid hydrogen) or the release medium is not gaseous H2.\nExclude no LOC rubric: Mark true when no hydrogen was released; set false if any amount of hydrogen actually leaked.\n",
     "model": "gemma3:1b",
     "model_name": "Gemma3-1B",
-    "reasoning": "",
-    "continuous_release": true,
-    "continuous_release_confidence": 9,
-    "immediate_ignition": true,
-    "immediate_ignition_confidence": 9,
-    "barrier_stopped_immediate_ignition": true,
-    "delayed_ignition": false,
-    "delayed_ignition_confidence": 8,
-    "barrier_stopped_delayed_ignition": true,
-    "confined_space": true,
-    "confined_space_confidence": 9,
-    "exclude_not_pure_h2": true,
-    "exclude_not_gaseous_h2": true,
-    "exclude_no_loc": true
+    "reasoning": [
+      "",
+      ""
+    ],
+    "continuous_release": [
+      true,
+      true
+    ],
+    "continuous_release_confidence": [
+      9,
+      9
+    ],
+    "immediate_ignition": [
+      true,
+      true
+    ],
+    "immediate_ignition_confidence": [
+      9,
+      9
+    ],
+    "barrier_stopped_immediate_ignition": [
+      true,
+      true
+    ],
+    "delayed_ignition": [
+      false,
+      true
+    ],
+    "delayed_ignition_confidence": [
+      7,
+      8
+    ],
+    "barrier_stopped_delayed_ignition": [
+      true,
+      true
+    ],
+    "confined_space": [
+      true,
+      true
+    ],
+    "confined_space_confidence": [
+      10,
+      9
+    ],
+    "exclude_not_pure_h2": [
+      true,
+      true
+    ],
+    "exclude_not_gaseous_h2": [
+      true,
+      true
+    ],
+    "exclude_no_loc": [
+      true,
+      true
+    ]
   }
 ]
