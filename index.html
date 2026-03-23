@@ -1462,7 +1462,7 @@
       { key: "confined_space", short: "CS", long: "Confined space" },
     ];
 
-    const DEFAULT_MODEL_ID = "gpt-oss-20b";
+    const DEFAULT_MODEL = "gpt-oss:20b";
 
     let manifestData = null;
     let availableModels = [];
@@ -3231,7 +3231,7 @@
         if (!model || typeof model !== "object") return acc;
         const eventsPath = model.events_path || model.eventsPath;
         if (!eventsPath) return acc;
-        const id = String(model.id || eventsPath || `model-${index + 1}`);
+        const id = String(model.model || model.id || eventsPath || `model-${index + 1}`);
         acc.push({ ...model, id, events_path: eventsPath });
         return acc;
       }, []);
@@ -3240,7 +3240,14 @@
     function resolvePreferredModelId() {
       const stored = localStorage.getItem("hiad-model");
       if (stored && availableModels.some((model) => model.id === stored)) return stored;
-      if (availableModels.some((model) => model.id === DEFAULT_MODEL_ID)) return DEFAULT_MODEL_ID;
+      if (availableModels.some((model) => model.id === DEFAULT_MODEL)) return DEFAULT_MODEL;
+      if (
+        manifestData &&
+        manifestData.default_model &&
+        availableModels.some((model) => model.id === manifestData.default_model)
+      ) {
+        return manifestData.default_model;
+      }
       if (
         manifestData &&
         manifestData.default_model_id &&

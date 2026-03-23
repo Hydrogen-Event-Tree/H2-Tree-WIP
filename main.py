@@ -1,10 +1,6 @@
 import json
-import sys
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pandas as pd
-from pandas import Series
 from tqdm import tqdm
 import ollama
 
@@ -13,107 +9,11 @@ from google import genai
 from google.genai import types
 
 from dashboard import run as run_dashboard
+from parse_hiad import build_event_record, read_enriched_events
 
 FILE_PATH = "HIAD.xlsx"
-COUNT = 20
+COUNT = 2
 DEFAULT_MAX_WORKERS = 8
-
-MERGE_SHEETS = [
-    "EVENTS",
-    "FACILITY",
-    "CONSEQUENCES",
-    "LESSONS LEARNT",
-    "EVENT NATURE",
-    "REFERENCES",
-]
-
-PROMPT_IGNORED_COLUMNS = {
-    "Event Title",
-    "Event full description",
-    "rocket",
-}
-
-PROMPT_SECTIONS = [
-    (
-        "Event Overview",
-        [
-            ("Event ID", "Event ID"),
-            ("Q", "Q"),
-            ("Event Initiating system", "Event Initiating system"),
-            ("Classification of the physical effects", "Classification of the physical effects"),
-            ("Nature of the consequences", "Nature of the consequences"),
-            ("Macro-region", "Macro-region"),
-            ("Country", "Country"),
-            ("Date", "Date"),
-            ("Date entry in HIAD", "Date entry in HIAD"),
-        ],
-    ),
-    (
-        "Cause Analysis",
-        [
-            ("Summary root causes", "Summary root causes"),
-            ("Root CAUSE analysis", "Root CAUSE analysis"),
-            ("System design error", "System design error"),
-            ("Material/manufacturing error", "Material/ manufacturing error"),
-            ("Installation error", "Installation error"),
-            ("Job factors", "Job factors "),
-            ("Human factors", "Human factors"),
-            ("Management factors", "Management factors"),
-            ("Environment", "Environment"),
-            ("Unknown", "Unknown"),
-        ],
-    ),
-    (
-        "Facility And Process",
-        [
-            ("Application", "Application"),
-            ("Sub-application", "Sub-application"),
-            ("Hydrogen supply chain stage", "Hydrogen supply chain stage"),
-            ("Other components involved", "Other components involved"),
-            ("Storage/process medium", "Storage/process medium"),
-            ("Storage/process quantity [kg]", "Storage/process quantity [kg]"),
-            ("Actual pressure [MPa]", "Actual pressure\n[MPa]"),
-            ("Design pressure [MPa]", "Design pressure\n[MPa]"),
-            ("Location type", "Location type"),
-            ("Location description", "Location description"),
-            ("Operational condition", "Operational condition"),
-            ("Pre-event occurrences", "Pre-event occurrences"),
-            ("Description of the facility/unit/process/substances", "Description of the facility/unit/process/substances"),
-        ],
-    ),
-    (
-        "Consequences",
-        [
-            ("Number of injured persons", "Number of injured persons"),
-            ("Number of fatalities", "Number of fatalities"),
-            ("Environmental damage", "Environmental damage"),
-            ("Currency", "Currency"),
-            ("Property loss (onsite)", "Property loss (onsite)"),
-            ("Property loss (offsite)", "Property loss (offsite)"),
-            ("Post-event summary", "Post-event summary"),
-            ("Official legal action", "Official legal action"),
-            ("Investigation comments", "Investigation comments"),
-        ],
-    ),
-    (
-        "Lessons Learnt",
-        [
-            ("Lesson learnt", "Lesson Learnt"),
-            ("Corrective measures", "Corrective Measures"),
-        ],
-    ),
-    (
-        "Event Nature",
-        [
-            ("Emergency action", "Emergency action"),
-            ("Emergency evaluation", "Emergency evaluation"),
-            ("Release type", "Release type"),
-            ("Involved substances", "Involved substances"),
-            ("Concentration [% vol]", "[% vol]"),
-            ("Probable ignition source", "Probable IGNITION SOURCE"),
-        ],
-    ),
-]
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY = ""
@@ -121,19 +21,18 @@ GEMINI_API_KEY = ""
 
 LLMS = [
     #{
-    #    "id": "gemini-3-pro",
     #    "name": "Gemini 3 Pro",
     #    "model": "gemini-3-pro-preview",
     #    "provider": "google-ai-studio",
     #},
     #{
-    #    "id": "gemini-3-flash",
     #    "name": "Gemini 3 Flash",
     #    "model": "gemini-3-flash-preview",
     #    "provider": "google-ai-studio",
     #},
-    {"id": "qwen3.5-4b", "name": "Qwen3.5-4B", "model": "qwen3.5:4b", "provider": "ollama"},
-    {"id": "gemma3-1b", "name": "Gemma3-1B", "model": "gemma3.5:1b", "provider": "ollama"},
+    #{"name": "Qwen3.5-4B", "model": "qwen3.5:4b", "provider": "ollama"},
+    {"name": "gpt-oss-20b", "model": "gpt-oss:20b", "provider": "ollama"},
+    {"name": "Gemma3-1B", "model": "gemma3:1b", "provider": "ollama"},
 ]
 
 RESPONSE_SCHEMA = {
@@ -169,6 +68,8 @@ RESPONSE_SCHEMA = {
         "exclude_no_loc",
     ],
 }
+
+RESPONSE_SCHEMA_JSON = json.dumps(RESPONSE_SCHEMA, ensure_ascii=True, indent=2)
 
 OPENROUTER_SCHEMA = {
     "name": "event_tree_output",
@@ -251,29 +152,6 @@ def _parse_genai_response(response):
     return parsed, reasoning
 
 
-def _suppress_openpyxl_warnings():
-    warnings.filterwarnings(
-        "ignore",
-        category=UserWarning,
-        module="openpyxl",
-        message="Conditional Formatting extension is not supported",
-    )
-    warnings.filterwarnings(
-        "ignore",
-        category=UserWarning,
-        module="openpyxl",
-        message="Data Validation extension is not supported",
-    )
-
-
-def _clean_value(value):
-    """Normalize cell values and drop empty content."""
-    if pd.isna(value):
-        return None
-    text = str(value).replace("_x000D_", "\n").strip()
-    return text or None
-
-
 def _serialize_reasoning(value):
     if value is None:
         return ""
@@ -285,76 +163,30 @@ def _serialize_reasoning(value):
         return str(value)
 
 
-def _extract_ollama_message_value(message, field: str):
-    if isinstance(message, dict):
-        return message.get(field) or message.get("metadata", {}).get(field)
-    return getattr(message, field, None) or getattr(getattr(message, "metadata", None), field, None)
-
-
-def _ask_ollama(prompt: str, system_prompt: str, model: str, stream_reasoning: bool = False):
+def _ask_ollama(prompt: str, system_prompt: str, model: str):
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    if stream_reasoning:
-        content_parts = []
-        reasoning_parts = []
-        printed_reasoning = False
+    response = ollama.chat(
+        model=model,
+        think=False,
+        format=RESPONSE_SCHEMA,
+        messages=messages,
+    )
 
-        response = ollama.chat(
-            model=model,
-            think=False,
-            stream=True,
-            format=RESPONSE_SCHEMA,
-            messages=messages,
-        )
-
-        for chunk in response:
-            message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
-            content_delta = _extract_ollama_message_value(message, "content") or ""
-            reasoning_delta = (
-                _extract_ollama_message_value(message, "thinking")
-                or _extract_ollama_message_value(message, "reasoning")
-                or ""
-            )
-
-            if content_delta:
-                content_parts.append(content_delta)
-
-            if reasoning_delta:
-                reasoning_parts.append(reasoning_delta)
-                if not printed_reasoning:
-                    tqdm.write("Thinking:")
-                    printed_reasoning = True
-                sys.stdout.write(reasoning_delta)
-                sys.stdout.flush()
-
-        if printed_reasoning:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-
-        content = "".join(content_parts)
-        reasoning = _serialize_reasoning("".join(reasoning_parts))
-    else:
-        response = ollama.chat(
-            model=model,
-            think=True,
-            format=RESPONSE_SCHEMA,
-            messages=messages,
-        )
-
-        message = response.get("message", {})
-        content = message.get("content", "")
-        reasoning = (
-            message.get("thinking")
-            or message.get("reasoning")
-            or message.get("metadata", {}).get("thinking")
-            or response.get("thinking")
-            or response.get("metadata", {}).get("thinking")
-            or ""
-        )
-        reasoning = _serialize_reasoning(reasoning)
+    message = response.get("message", {})
+    content = message.get("content", "")
+    reasoning = (
+        message.get("thinking")
+        or message.get("reasoning")
+        or message.get("metadata", {}).get("thinking")
+        or response.get("thinking")
+        or response.get("metadata", {}).get("thinking")
+        or ""
+    )
+    reasoning = _serialize_reasoning(reasoning)
 
     try:
         parsed = json.loads(content)
@@ -434,7 +266,7 @@ def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str):
     return _parse_genai_response(response)
 
 
-def ask(prompt: str, system_prompt: str, model_config: dict, stream_reasoning: bool = False):
+def ask(prompt: str, system_prompt: str, model_config: dict):
     provider = model_config.get("provider", "ollama")
     model = model_config.get("model")
     if not model:
@@ -448,116 +280,21 @@ def ask(prompt: str, system_prompt: str, model_config: dict, stream_reasoning: b
             prompt=prompt,
             system_prompt=system_prompt,
             model=model,
-            stream_reasoning=stream_reasoning,
         )
     raise ValueError(f"Unsupported provider: {provider}")
 
-
-def read_enriched_events(path: str, n: int):
-    _suppress_openpyxl_warnings()
-    workbook = pd.ExcelFile(path)
-    available_sheets = set(workbook.sheet_names)
-
-    merged = None
-    merged_cols: set[str] = set()
-
-    for sheet in MERGE_SHEETS:
-        if sheet not in available_sheets:
-            continue
-        df = pd.read_excel(workbook, sheet_name=sheet)
-        if "Event ID" not in df.columns:
-            continue  # Skip sheets that cannot be merged.
-        if merged is None:
-            merged = df
-        else:
-            # Drop duplicate columns (keep the first occurrence seen).
-            dup_cols = [col for col in df.columns if col in merged_cols and col != "Event ID"]
-            df = df.drop(columns=dup_cols)
-            merged = merged.merge(df, on="Event ID", how="left")
-        merged_cols = set(merged.columns)
-
-    if merged is None:
-        raise ValueError("No sheets loaded from Excel file.")
-
-    merged = merged[merged["Event full description"].notna()].head(n)
-    return merged
-
-
-def build_event_markdown(row: Series) -> str:
-    title = _clean_value(row.get("Event Title")) or "Untitled Event"
-    description = _clean_value(row.get("Event full description")) or "No description available."
-    used_columns = set()
-    sections = [f"# {title}", ""]
-
-    for section_title, field_specs in PROMPT_SECTIONS:
-        lines = []
-        for label, column in field_specs:
-            value = _clean_value(row.get(column))
-            if not value:
-                continue
-            lines.append(f"- **{label}:** {value}")
-            used_columns.add(column)
-
-        if lines:
-            sections.append(f"## {section_title}")
-            sections.extend(lines)
-            sections.append("")
-
-    additional_fields = []
-    for col in row.index:
-        if col in PROMPT_IGNORED_COLUMNS or col in used_columns:
-            continue
-        cleaned = _clean_value(row.get(col))
-        if cleaned:
-            additional_fields.append(f"- **{col}:** {cleaned}")
-
-    if additional_fields:
-        sections.append("## Additional HIAD Fields")
-        sections.extend(additional_fields)
-        sections.append("")
-
-    sections.append("## Description")
-    sections.append(description)
-    return "\n".join(sections)
-
-
-def _prepare_event_record(row: Series, system_prompt: str, model_config: dict):
-    markdown = build_event_markdown(row)
-    description = _clean_value(row.get("Event full description")) or "No description available."
-    prompt = f"""Use the HIAD event record below to determine the answers for each question.
-Treat the structured descriptors as the primary evidence and use the narrative description and references to resolve ambiguity.
-
-Event details:
-
-{markdown}
-"""
-    record = {
-        "event_id": _clean_value(row.get("Event ID")),
-        "title": _clean_value(row.get("Event Title")) or "Untitled Event",
-        "description": description,
-        "user_prompt": prompt,
-        "system_prompt": system_prompt,
-        "model": model_config["model"],
-        "model_id": model_config.get("id"),
-        "model_name": model_config.get("name"),
-        "reasoning": "",
-    }
-    return record, markdown
-
-
-def _run_model_request(record: dict, model_config: dict, stream_reasoning: bool = False):
+def _run_model_request(record: dict, model_config: dict):
     result, reasoning = ask(
         prompt=record["user_prompt"],
         system_prompt=record["system_prompt"],
         model_config=model_config,
-        stream_reasoning=stream_reasoning,
     )
     record["reasoning"] = reasoning
     record.update(result)
     return record, result
 
 
-def process_events(model_config, log=False, save_path=None):
+def process_events(model_config, save_path=None):
     events = read_enriched_events(FILE_PATH, COUNT)
     results = []
     if not isinstance(model_config, dict) or not model_config.get("model"):
@@ -571,10 +308,7 @@ def process_events(model_config, log=False, save_path=None):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
             for idx, (_, row) in enumerate(events.iterrows()):
-                record, markdown = _prepare_event_record(row, SYSTEM_PROMPT, model_config)
-                if log:
-                    tqdm.write(markdown + "\n")
-                    tqdm.write("==========================================")
+                record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
                 futures[executor.submit(_run_model_request, record, model_config)] = idx
 
             with tqdm(
@@ -583,11 +317,8 @@ def process_events(model_config, log=False, save_path=None):
             ) as progress:
                 for future in as_completed(futures):
                     idx = futures[future]
-                    record, result = future.result()
+                    record, _ = future.result()
                     results_by_index[idx] = record
-                    if log:
-                        tqdm.write(str(result))
-                        tqdm.write("==========================================")
                     progress.update(1)
         results = results_by_index
     else:
@@ -596,20 +327,9 @@ def process_events(model_config, log=False, save_path=None):
             total=len(events),
             desc=f"Processing events ({model_label})",
         ):
-            record, markdown = _prepare_event_record(row, SYSTEM_PROMPT, model_config)
-            if log:
-                tqdm.write(markdown + "\n")
-                tqdm.write("==========================================")
-            record, result = _run_model_request(
-                record,
-                model_config,
-                stream_reasoning=log and provider == "ollama",
-            )
+            record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
+            record, _ = _run_model_request(record, model_config)
             results.append(record)
-
-            if log:
-                tqdm.write(str(result))
-                tqdm.write("==========================================")
 
     if save_path is not None:
         save_events(results, path=save_path)
@@ -628,33 +348,37 @@ def load_events(path = "events.json"):
     return events
 
 
-def save_events_manifest(models, default_model_id=None, path="events-manifest.json"):
+def save_events_manifest(model_configs, default_model=None, path="events-manifest.json"):
+    models = [
+        {
+            "name": model_config.get("name"),
+            "events_path": f"events-{_model_slug(model_config['model'])}.json",
+            "model": model_config.get("model"),
+        }
+        for model_config in model_configs
+    ]
     payload = {"models": models}
-    if default_model_id is not None:
-        payload["default_model_id"] = default_model_id
+    if default_model is None and model_configs:
+        default_model = model_configs[0].get("model")
+    if default_model is not None:
+        payload["default_model"] = default_model
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=True, indent=2)
+
+
+def _model_slug(model: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in model)
 
 
 if __name__ == "__main__":
     gen = 1
     port = 4000
 
-    manifest = [
-        {
-            "id": model_config.get("id"),
-            "name": model_config.get("name"),
-            "events_path": f"events-{model_config['id']}.json",
-            "model": model_config.get("model"),
-        }
-        for model_config in LLMS
-    ]
-
     if gen:
         for model_config in LLMS:
-            events_path = f"events-{model_config['id']}.json"
-            process_events(model_config=model_config, log=True, save_path=events_path)
+            events_path = f"events-{_model_slug(model_config['model'])}.json"
+            process_events(model_config=model_config, save_path=events_path)
 
-    save_events_manifest(manifest, default_model_id=LLMS[0]["id"] if LLMS else None)
+    save_events_manifest(LLMS)
 
     run_dashboard(port=port)
