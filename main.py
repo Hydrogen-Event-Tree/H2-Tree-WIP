@@ -39,34 +39,26 @@ LLMS = [
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "continuous_release": {"type": "boolean"},
-        "continuous_release_confidence": {"type": "integer", "minimum": 0, "maximum": 10},
-        "immediate_ignition": {"type": "boolean"},
-        "immediate_ignition_confidence": {"type": "integer", "minimum": 0, "maximum": 10},
-        "barrier_stopped_immediate_ignition": {"type": "boolean"},
-        "delayed_ignition": {"type": "boolean"},
-        "delayed_ignition_confidence": {"type": "integer", "minimum": 0, "maximum": 10},
-        "barrier_stopped_delayed_ignition": {"type": "boolean"},
-        "confined_space": {"type": "boolean"},
-        "confined_space_confidence": {"type": "integer", "minimum": 0, "maximum": 10},
-        "exclude_not_pure_h2": {"type": "boolean"},
-        "exclude_not_gaseous_h2": {"type": "boolean"},
-        "exclude_no_loc": {"type": "boolean"},
+        "continuous_release": {"type": "integer", "minimum": 0, "maximum": 10},
+        "immediate_ignition": {"type": "integer", "minimum": 0, "maximum": 10},
+        "barrier_stopped_immediate_ignition": {"type": "integer", "minimum": 0, "maximum": 10},
+        "delayed_ignition": {"type": "integer", "minimum": 0, "maximum": 10},
+        "barrier_stopped_delayed_ignition": {"type": "integer", "minimum": 0, "maximum": 10},
+        "confined_space": {"type": "integer", "minimum": 0, "maximum": 10},
+        "pure_h2": {"type": "integer", "minimum": 0, "maximum": 10},
+        "gaseous_h2": {"type": "integer", "minimum": 0, "maximum": 10},
+        "loss_of_containment": {"type": "integer", "minimum": 0, "maximum": 10},
     },
     "required": [
         "continuous_release",
-        "continuous_release_confidence",
         "immediate_ignition",
-        "immediate_ignition_confidence",
         "barrier_stopped_immediate_ignition",
         "delayed_ignition",
-        "delayed_ignition_confidence",
         "barrier_stopped_delayed_ignition",
         "confined_space",
-        "confined_space_confidence",
-        "exclude_not_pure_h2",
-        "exclude_not_gaseous_h2",
-        "exclude_no_loc",
+        "pure_h2",
+        "gaseous_h2",
+        "loss_of_containment",
     ],
 }
 ANSWER_FIELDS = tuple(RESPONSE_SCHEMA["properties"].keys())
@@ -82,17 +74,24 @@ OPENROUTER_SCHEMA = {
     "strict": True,
 }
 
-SYSTEM_PROMPT = """Fill every field in the JSON schema. For each question not about barriers or exclusion, provide a boolean answer and an integer confidence from 0-10 (0 = no information in the description to decide; 10 = the description makes the chosen answer unquestionably clear). Schema: {continuous_release:boolean, continuous_release_confidence:int, immediate_ignition:boolean, immediate_ignition_confidence:int, barrier_stopped_immediate_ignition:boolean, delayed_ignition:boolean, delayed_ignition_confidence:int, barrier_stopped_delayed_ignition:boolean, confined_space:boolean, confined_space_confidence:int, exclude_not_pure_h2:boolean, exclude_not_gaseous_h2:boolean, exclude_no_loc:boolean}. Use the provided event details to decide.
+SYSTEM_PROMPT = """Fill every field in the JSON schema with a single integer from 0-10. Use this scale for every field:
+- 10 = yes with full certainty
+- 9-6 = yes, with decreasing certainty
+- 5 = no information either way / genuinely ambiguous from the provided evidence
+- 4-1 = no, with increasing certainty
+- 0 = no with full certainty
 
-Continuous release rubric: Mark true if hydrogen release persisted over time rather than a single brief discharge.
-Immediate ignition rubric: Mark true if ignition occurred at the moment of release or within seconds without delay or hydrogen accumulation in the surrounding environment.
-Delayed ignition rubric: Mark true if a flammable cloud or explosive mixture formed and ignited after a noticeable delay from the release.
-Barrier (immediate) rubric: If immediate_ignition is true, barrier_stopped_immediate_ignition must be false. If immediate_ignition is false, set barrier_stopped_immediate_ignition to true only when a barrier meaningfully prevented immediate ignition (e.g., ESD systems, isolation valves, emergency shutdowns); otherwise set it to false.
-Barrier (delayed) rubric: If delayed_ignition is true, barrier_stopped_delayed_ignition must be false. If delayed_ignition is false, set barrier_stopped_delayed_ignition to true only when a barrier meaningfully prevented delayed ignition (e.g., ESD, inerting, venting, isolation); otherwise set it to false.
-Confined space rubric: Mark true if the release occurred in an enclosed or poorly ventilated area that limits dispersion.
-Exclude not pure H2 rubric: Mark true if the release substance is a hydrogen mixture with significant non-hydrogen components or is not primarily hydrogen.
-Exclude not gaseous H2 rubric: Mark true if hydrogen was released in a non-gaseous state (e.g., liquid or solid hydrogen) or the release medium is not gaseous H2.
-Exclude no LOC rubric: Mark true when no hydrogen was released; set false if any amount of hydrogen actually leaked.
+Schema: {continuous_release:int, immediate_ignition:int, barrier_stopped_immediate_ignition:int, delayed_ignition:int, barrier_stopped_delayed_ignition:int, confined_space:int, pure_h2:int, gaseous_h2:int, loss_of_containment:int}. Use the provided event details to decide.
+
+Continuous release rubric: Score high if hydrogen release persisted over time rather than a single brief discharge.
+Immediate ignition rubric: Score high if ignition occurred at the moment of release or within seconds without delay or hydrogen accumulation in the surrounding environment.
+Delayed ignition rubric: Score high if a flammable cloud or explosive mixture formed and ignited after a noticeable delay from the release.
+Barrier (immediate) rubric: Score high only when immediate ignition did not occur and a barrier meaningfully prevented immediate ignition (e.g., ESD systems, isolation valves, emergency shutdowns). If immediate ignition clearly occurred, barrier_stopped_immediate_ignition should be near 0.
+Barrier (delayed) rubric: Score high only when delayed ignition did not occur and a barrier meaningfully prevented delayed ignition (e.g., ESD, inerting, venting, isolation). If delayed ignition clearly occurred, barrier_stopped_delayed_ignition should be near 0.
+Confined space rubric: Score high if the release occurred in an enclosed or poorly ventilated area that limits dispersion.
+Pure H2 rubric: Score high if the released substance is pure or essentially pure gaseous hydrogen; score low if it is a hydrogen mixture with significant non-hydrogen components or is not primarily hydrogen.
+Gaseous H2 rubric: Score high if the released hydrogen was gaseous; score low if the release was liquid/solid hydrogen or otherwise not gaseous hydrogen.
+Loss of containment rubric: Score high if any amount of hydrogen actually leaked or was released; score low if no hydrogen release occurred.
 """
 
 
@@ -362,17 +361,19 @@ def process_events(model_config, save_path=None):
                     progress.update(1)
         results = results_by_index
     else:
-        for _, row in tqdm(
-            events.iterrows(),
-            total=len(events),
+        event_progress = tqdm(
+            total=len(events) * ANSWERS_PER_MODEL,
             desc=f"Processing events ({model_label})",
-        ):
+        )
+        for _, row in events.iterrows():
             record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
             event_result = _initialize_event_result(record)
             for realization_index in range(ANSWERS_PER_MODEL):
                 _, result, reasoning = _run_model_request(record, model_config, realization_index)
                 _store_realization(event_result, realization_index, result, reasoning)
+                event_progress.update(1)
             results.append(event_result)
+        event_progress.close()
 
     if save_path is not None:
         save_events(results, path=save_path)
@@ -414,7 +415,7 @@ def _model_slug(model: str) -> str:
 
 
 if __name__ == "__main__":
-    gen = 1
+    gen = 0
     port = 4000
 
     if gen:

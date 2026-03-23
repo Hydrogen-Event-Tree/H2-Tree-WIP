@@ -3,9 +3,37 @@ from scipy.stats import beta
 from scipy.optimize import minimize_scalar
 import numpy as np
 
+SCORE_FIELDS = {
+    "continuous_release",
+    "immediate_ignition",
+    "barrier_stopped_immediate_ignition",
+    "delayed_ignition",
+    "barrier_stopped_delayed_ignition",
+    "confined_space",
+    "pure_h2",
+    "gaseous_h2",
+    "loss_of_containment",
+}
+
+
+def score_to_bool(value):
+    try:
+        return int(value) > 5
+    except (TypeError, ValueError):
+        return False
+
+
+def score_certainty(value):
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, abs(score - 5) / 5.0))
+
+
 def create_event_tree(events, show_exclusion = False, filename = "event_tree.png"):
     """
-    Build a left-to-right event tree using the boolean answers.
+    Build a left-to-right event tree using score-derived boolean answers.
 
     Layout rules:
     - LOC at the root (or "All events" when showing exclusions).
@@ -20,22 +48,26 @@ def create_event_tree(events, show_exclusion = False, filename = "event_tree.png
     if not events:
         raise ValueError("No events provided for plotting.")
 
-    exclusion_flags = [
-        "exclude_not_pure_h2",
-        "exclude_not_gaseous_h2",
-        "exclude_no_loc",
-        "barrier_stopped_immediate_ignition",
+    inclusion_flags = [
+        "pure_h2",
+        "gaseous_h2",
+        "loss_of_containment",
     ]
 
     def barrier_delayed(event):
-        return bool(event.get("barrier_stopped_delayed_ignition")) and not bool(
+        return score_to_bool(event.get("barrier_stopped_delayed_ignition")) and not score_to_bool(
             event.get("immediate_ignition")
         )
+
+    def barrier_immediate(event):
+        return score_to_bool(event.get("barrier_stopped_immediate_ignition"))
+
     if show_exclusion:
         events = [
             {
                 **event,
-                "excluded": any(bool(event.get(flag)) for flag in exclusion_flags)
+                "excluded": any(not score_to_bool(event.get(flag)) for flag in inclusion_flags)
+                or barrier_immediate(event)
                 or barrier_delayed(event),
             }
             for event in events
@@ -44,14 +76,18 @@ def create_event_tree(events, show_exclusion = False, filename = "event_tree.png
         events = [
             event
             for event in events
-            if all(not bool(event.get(flag)) for flag in exclusion_flags)
+            if all(score_to_bool(event.get(flag)) for flag in inclusion_flags)
+            and not barrier_immediate(event)
             and not barrier_delayed(event)
         ]
         if not events:
             raise ValueError("No includable events after exclusions were applied.")
 
     def matches(event, conditions):
-        return all(bool(event.get(key)) == value for key, value in conditions.items())
+        return all(
+            (score_to_bool(event.get(key)) if key in SCORE_FIELDS else bool(event.get(key))) == value
+            for key, value in conditions.items()
+        )
 
     def count_for(conditions):
         return sum(1 for event in events if matches(event, conditions))
@@ -87,7 +123,7 @@ def create_event_tree(events, show_exclusion = False, filename = "event_tree.png
         return a, b
 
     def format_uncertainty(x, w, plot=False):
-        weights = [max(0.0, float(value)) / 10.0 for value in w]
+        weights = [max(0.0, min(1.0, float(value))) for value in w]
         S = sum(xi * wi for xi, wi in zip(x, weights))
         N = sum(weights)
 
@@ -456,19 +492,14 @@ def create_event_tree(events, show_exclusion = False, filename = "event_tree.png
         target_value = node_conditions[key]
 
         answers = []
-        confidences = []
-        confidence_key = f"{key}_confidence"
-
+        strengths = []
         for event in events:
             if not matches(event, parent_conditions):
                 continue
-            answers.append(1 if bool(event.get(key)) == target_value else 0)
-            try:
-                confidences.append(int(event.get(confidence_key, 0)))
-            except (TypeError, ValueError):
-                confidences.append(0)
+            answers.append(1 if score_to_bool(event.get(key)) == target_value else 0)
+            strengths.append(score_certainty(event.get(key)))
 
-        return answers, confidences
+        return answers, strengths
 
     base_height = 6
     fig_height = base_height + (1.5 if show_exclusion else 0)
@@ -520,8 +551,8 @@ def create_event_tree(events, show_exclusion = False, filename = "event_tree.png
             if skip_uncertainty:
                 text = f"{bold_label(node['label'])} ({count})"
             else:
-                answers, confidences = uncertainty_inputs_for(node["id"])
-                interval = format_uncertainty(answers, confidences)
+                answers, strengths = uncertainty_inputs_for(node["id"])
+                interval = format_uncertainty(answers, strengths)
                 text = f"{bold_label(node['label'])} ({count})\n{interval}"
 
         ax.text(

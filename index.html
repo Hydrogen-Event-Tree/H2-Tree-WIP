@@ -262,9 +262,8 @@
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
-    .answer-table col.col-key { width: 45%; }
-    .answer-table col.col-value { width: 35%; }
-    .answer-table col.col-conf { width: 20%; }
+    .answer-table col.col-key { width: 55%; }
+    .answer-table col.col-value { width: 45%; }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -547,6 +546,7 @@
     }
     .tree-wrapper {
       position: relative;
+      isolation: isolate;
       min-height: 421px;
       background: var(--tree-bg);
       border: 1px solid var(--border);
@@ -578,10 +578,12 @@
       inset: 0;
       width: 100%;
       height: 100%;
+      z-index: 0;
       pointer-events: none;
     }
     .tree-node {
       position: absolute;
+      z-index: 2;
       transform: translate(-50%, -50%) translate(var(--shift-x, 0px), var(--shift-y, 0px));
       width: 129px;
       padding: 6px 9px;
@@ -641,6 +643,7 @@
     }
     .tree-column-label {
       position: absolute;
+      z-index: 3;
       top: 12px;
       transform: translateX(-50%) translate(var(--shift-x, 0px), var(--shift-y, 0px));
       font-size: 12px;
@@ -1343,21 +1346,21 @@
               <div class="control-label">Include events</div>
               <div class="control-options">
                 <label class="control-option">
-                  <input type="checkbox" id="includeNotPureH2" />
+                  <input type="checkbox" id="onlyPureH2" checked />
                   <div class="control-text">
-                    <div class="control-title" id="labelNotPureH2">Include not pure H2</div>
+                    <div class="control-title" id="labelPureH2">Only pure H2</div>
                   </div>
                 </label>
                 <label class="control-option">
-                  <input type="checkbox" id="includeNotGaseousH2" />
+                  <input type="checkbox" id="onlyGaseousH2" checked />
                   <div class="control-text">
-                    <div class="control-title" id="labelNotGaseousH2">Include not gaseous H2</div>
+                    <div class="control-title" id="labelGaseousH2">Only gaseous H2</div>
                   </div>
                 </label>
                 <label class="control-option">
-                  <input type="checkbox" id="includeNoLoc" />
+                  <input type="checkbox" id="onlyLossOfContainment" checked />
                   <div class="control-text">
-                    <div class="control-title" id="labelNoLoc">Include no loss of containment</div>
+                    <div class="control-title" id="labelLossOfContainment">Only loss of containment</div>
                   </div>
                 </label>
                 <label class="control-option">
@@ -1423,13 +1426,13 @@
               </div>
             </div>
             <div class="control-block">
-              <div class="control-label">Confidence</div>
+              <div class="control-label">Score weighting</div>
               <div class="control-options">
                 <label class="control-option">
                   <input type="checkbox" id="toggleConfidenceWeights" checked />
                   <div class="control-text">
-                    <div class="control-title">Use confidence weights</div>
-                    <div class="control-subtitle">Scale by reported confidence</div>
+                    <div class="control-title">Use score strength</div>
+                    <div class="control-subtitle">Scale by distance from neutral score 5</div>
                   </div>
                 </label>
               </div>
@@ -1473,7 +1476,7 @@
           This dashboard is fully based the data from <a href="https://minerva.jrc.ec.europa.eu/en/shorturl/capri/hiadpt" target="_blank">HIAD 2.2</a>, developed by the Joint Research Centre (JRC) of the European Commission, however they are not responsible for any of the data as displayed on this website and have not been involved in the production of the dashboard. We are thankful for their contributions and hope that this dashboard can help make their data even more accessible.
         </p>
         <p>
-          On the website, we have attempted to make it clear that the "Model Answers" which underpin the event tree is based on the output of a large language model (LLM) asked to classify the events in HIAD. This approach, like any, is imperfect but we have attempted to counteract this by, e.g., incorporating notions of certainty in model answers.
+          On the website, we have attempted to make it clear that the "Model Answers" which underpin the event tree is based on the output of a large language model (LLM) asked to classify the events in HIAD. This approach, like any, is imperfect but we have attempted to counteract this by using a graded 0-10 answer scale rather than binary labels alone.
         </p>
         <p>
           This dashboard was produced by Simon Halvdansson as part of the <a href="https://hydrogeni.no/" target="_blank">HYDROGENi</a> project at <a href="https://www.sintef.no/en/sintef-energy/" target="_blank">SINTEF Energy Research</a>. For additional details on the project which this dashboard is a part of, see the paper (link to be added) and <a href="https://github.com/SimonHalvdansson/H2-Event-Tree" target="_blank">GitHub repository</a>.
@@ -1519,6 +1522,20 @@
       { key: "delayed_ignition", short: "DI", long: "Delayed ignition" },
       { key: "confined_space", short: "CS", long: "Confined space" },
     ];
+    const BARRIER_QUESTIONS = [
+      ["barrier_stopped_immediate_ignition", "Barrier stopped immediate ignition"],
+      ["barrier_stopped_delayed_ignition", "Barrier stopped delayed ignition"],
+    ];
+    const INCLUSION_QUESTIONS = [
+      ["pure_h2", "Pure H2"],
+      ["gaseous_h2", "Gaseous H2"],
+      ["loss_of_containment", "Loss of containment"],
+    ];
+    const SCORE_FIELDS = [
+      ...QUESTIONS.map(({ key }) => key),
+      ...BARRIER_QUESTIONS.map(([key]) => key),
+      ...INCLUSION_QUESTIONS.map(([key]) => key),
+    ];
 
     const DEFAULT_MODEL = "gpt-oss:20b";
 
@@ -1528,18 +1545,19 @@
     let eventsData = [];
     let sortMode = "id";
     let selectedIndex = null;
+    let activeRealizationIndex = 0;
     let treeReady = false;
     let currentTab = "details";
     let showCounts = true;
     let showProbability = true;
     let showCredible = true;
     let credibleLevel = 0.95;
-    let useConfidenceWeights = true;
+    let useScoreWeights = true;
     const showDistributionHover = true;
     let showDistributionAlways = true;
-    let includeNotPureH2 = false;
-    let includeNotGaseousH2 = false;
-    let includeNoLoc = false;
+    let onlyPureH2 = true;
+    let onlyGaseousH2 = true;
+    let onlyLossOfContainment = true;
     let includeBarrierImmediate = false;
     let includeBarrierDelayed = false;
     let activeTreeFilter = null;
@@ -1776,15 +1794,6 @@
     ];
 
     const TREE_DEFINITION = { decisions: TREE_DECISIONS, leaves: TREE_LEAVES, columns: TREE_COLUMNS };
-    const BOOLEAN_FIELDS = [
-      ...QUESTIONS.map(({ key }) => key),
-      "barrier_stopped_immediate_ignition",
-      "barrier_stopped_delayed_ignition",
-      "exclude_not_pure_h2",
-      "exclude_not_gaseous_h2",
-      "exclude_no_loc",
-    ];
-    const CONFIDENCE_FIELDS = QUESTIONS.map(({ key }) => `${key}_confidence`);
 
     function escapeHtml(str) {
       if (str === null || str === undefined) return "";
@@ -1806,6 +1815,50 @@
       return !!(ev && Array.isArray(ev.modelRecords));
     }
 
+    function normalizeScore(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return null;
+      return Math.min(10, Math.max(0, num));
+    }
+
+    function scoreToBool(value) {
+      const score = normalizeScore(value);
+      return score !== null ? score > 5 : false;
+    }
+
+    function scoreStrength(value) {
+      const score = normalizeScore(value);
+      if (score === null) return 0;
+      return Math.abs(score - 5) / 5;
+    }
+
+    function formatScore(value) {
+      const score = normalizeScore(value);
+      if (score === null) return "—";
+      return `${score.toFixed(1)}/10`;
+    }
+
+    function formatIndividualScore(value) {
+      const score = normalizeScore(value);
+      if (score === null) return "—";
+      return `${Math.round(score)}/10`;
+    }
+
+    function describeScore(value) {
+      const score = normalizeScore(value);
+      if (score === null) return "Unknown";
+      const scoreText = formatIndividualScore(score);
+      if (score === 5) return `Neutral (${scoreText})`;
+      if (score > 5) return `Yes (${scoreText})`;
+      return `No (${scoreText})`;
+    }
+
+    function interpretConditionValue(key, value) {
+      if (typeof value === "boolean") return value;
+      if (SCORE_FIELDS.includes(key)) return scoreToBool(value);
+      return value;
+    }
+
     function getModelRecord(ev, modelId = activeModelId) {
       if (!ev) return null;
       if (!isAggregatedEvent(ev)) return ev;
@@ -1816,8 +1869,7 @@
       if (!record || typeof record !== "object") return 0;
       const candidateLengths = [
         ensureArray(record.reasoning).length,
-        ...BOOLEAN_FIELDS.map((key) => ensureArray(record[key]).length),
-        ...CONFIDENCE_FIELDS.map((key) => ensureArray(record[key]).length),
+        ...SCORE_FIELDS.map((key) => ensureArray(record[key]).length),
       ];
       return Math.max(0, ...candidateLengths);
     }
@@ -1834,7 +1886,7 @@
         model_name: record.model_name,
         reasoning: ensureArray(record.reasoning)[realizationIndex] || "",
       };
-      [...BOOLEAN_FIELDS, ...CONFIDENCE_FIELDS].forEach((key) => {
+      SCORE_FIELDS.forEach((key) => {
         projected[key] = ensureArray(record[key])[realizationIndex];
       });
       return projected;
@@ -1902,12 +1954,6 @@
       return nums.reduce((sum, value) => sum + value, 0) / nums.length;
     }
 
-    function averageBooleans(values) {
-      const bools = values.filter((value) => typeof value === "boolean");
-      if (!bools.length) return null;
-      return bools.reduce((sum, value) => sum + (value ? 1 : 0), 0) / bools.length;
-    }
-
     function mostCommonValue(values) {
       const counts = new Map();
       let bestValue = null;
@@ -1922,20 +1968,6 @@
         }
       });
       return bestValue;
-    }
-
-    function formatBooleanAnswer(value) {
-      return value === true ? "Yes" : value === false ? "No" : "Unknown";
-    }
-
-    function formatAverageBoolean(value) {
-      if (!Number.isFinite(value)) return "—";
-      return `${(value * 100).toFixed(1)}% Yes`;
-    }
-
-    function formatAverageConfidence(value) {
-      if (!Number.isFinite(value)) return "—";
-      return `${value.toFixed(1)}/10`;
     }
 
     function getAggregateOutcome(ev) {
@@ -1994,27 +2026,27 @@
     }
 
     function barrierImmediate(ev) {
-      return ev.barrier_stopped_immediate_ignition === true;
+      return scoreToBool(ev.barrier_stopped_immediate_ignition);
     }
 
     function barrierDelayed(ev) {
-      return ev.barrier_stopped_delayed_ignition === true && ev.immediate_ignition !== true;
+      return scoreToBool(ev.barrier_stopped_delayed_ignition) && !scoreToBool(ev.immediate_ignition);
     }
 
     function isExcludedProjected(ev) {
       return !!(
-        ev.exclude_not_pure_h2 ||
-        ev.exclude_not_gaseous_h2 ||
-        ev.exclude_no_loc ||
+        !scoreToBool(ev.pure_h2) ||
+        !scoreToBool(ev.gaseous_h2) ||
+        !scoreToBool(ev.loss_of_containment) ||
         barrierImmediate(ev) ||
         barrierDelayed(ev)
       );
     }
 
     function shouldIncludeEvent(ev) {
-      if (!includeNotPureH2 && ev.exclude_not_pure_h2) return false;
-      if (!includeNotGaseousH2 && ev.exclude_not_gaseous_h2) return false;
-      if (!includeNoLoc && ev.exclude_no_loc) return false;
+      if (onlyPureH2 && !scoreToBool(ev.pure_h2)) return false;
+      if (onlyGaseousH2 && !scoreToBool(ev.gaseous_h2)) return false;
+      if (onlyLossOfContainment && !scoreToBool(ev.loss_of_containment)) return false;
       if (!includeBarrierImmediate && barrierImmediate(ev)) return false;
       if (!includeBarrierDelayed && barrierDelayed(ev)) return false;
       return true;
@@ -2200,6 +2232,67 @@
       `;
     }
 
+    function renderRealizationButtonGroup(record) {
+      const realizationCount = Math.max(getRealizationCount(record), 1);
+      const clampedIndex = Math.min(activeRealizationIndex, realizationCount - 1);
+      activeRealizationIndex = clampedIndex;
+      if (realizationCount <= 1) return "";
+      return `
+        <div class="model-button-group">
+          ${Array.from({ length: realizationCount }, (_, index) => `
+            <button
+              class="model-button js-realization-button${index === clampedIndex ? " active" : ""}"
+              type="button"
+              data-realization-index="${index}"
+            >#${index + 1}</button>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function getOutcomeEntries(ev) {
+      return getAllRealizationProjections(ev).map(({ modelId, modelName, realization, projected }) => ({
+        modelId,
+        modelName,
+        realization,
+        value: inferOutcome(projected) || "Unknown",
+      }));
+    }
+
+    function getStatusEntries(ev) {
+      return getAllRealizationProjections(ev).map(({ modelId, modelName, realization, projected }) => ({
+        modelId,
+        modelName,
+        realization,
+        value: isExcludedProjected(projected) ? "Excluded" : "Included",
+      }));
+    }
+
+    function renderOutcomePill(ev) {
+      const aggregateOutcome = getAggregateOutcome(ev) || "";
+      if (!aggregateOutcome) return "";
+      const outcomeEntries = getOutcomeEntries(ev);
+      const outcomeCell = renderHoverDetail(
+        aggregateOutcome,
+        outcomeEntries,
+        "Outcome",
+        (value) => String(value || "Unknown")
+      );
+      return `<div class="pill">Outcome: <span class="pill-value">${outcomeCell}</span></div>`;
+    }
+
+    function renderStatusBadge(ev, statusClass) {
+      const aggregateStatus = getAggregateStatus(ev);
+      const statusEntries = getStatusEntries(ev);
+      const statusCell = renderHoverDetail(
+        aggregateStatus,
+        statusEntries,
+        "Status",
+        (value) => String(value || "Unknown")
+      );
+      return `<div class="${statusClass}">${statusCell}</div>`;
+    }
+
     function renderReasoningTrace(ev) {
       const record = getModelRecord(ev, activeModelId);
       if (!record) {
@@ -2212,17 +2305,20 @@
       }
 
       const reasoningEntries = ensureArray(record.reasoning);
-      const content = reasoningEntries.length
-        ? reasoningEntries.map((reasoning, index) => `
-            <div class="reasoning-entry">
-              <div class="reasoning-entry-label">Realization ${index + 1}</div>
-              <pre>${escapeHtml(reasoning || "No reasoning trace captured.")}</pre>
-            </div>
-          `).join("")
-        : '<pre>No reasoning trace captured.</pre>';
+      const realizationCount = Math.max(reasoningEntries.length, getRealizationCount(record), 1);
+      const clampedIndex = Math.min(activeRealizationIndex, realizationCount - 1);
+      activeRealizationIndex = clampedIndex;
+      const reasoning = reasoningEntries[clampedIndex] || "No reasoning trace captured.";
+      const content = `
+        <div class="reasoning-entry">
+          <div class="reasoning-entry-label">Run #${clampedIndex + 1}</div>
+          <pre>${escapeHtml(reasoning)}</pre>
+        </div>
+      `;
 
       return `
         ${renderModelButtonGroup()}
+        ${renderRealizationButtonGroup(record)}
         <div class="reasoning-box">${content}</div>
       `;
     }
@@ -2231,64 +2327,52 @@
       const colgroup = `
         <col class="col-key" />
         <col class="col-value" />
-        <col class="col-conf" />
       `;
       const qa = QUESTIONS.map(({ key, long }) => {
-        const valueEntries = getFlattenedFieldEntries(ev, key).filter((entry) => typeof entry.value === "boolean");
-        const confidenceEntries = getFlattenedFieldEntries(ev, `${key}_confidence`)
-          .map((entry) => ({ ...entry, value: Number(entry.value) }))
-          .filter((entry) => Number.isFinite(entry.value));
-        const valueAverage = averageBooleans(valueEntries.map((entry) => entry.value));
-        const confidenceAverage = averageNumbers(confidenceEntries.map((entry) => entry.value));
-        const valueCell = renderHoverDetail(
-          formatAverageBoolean(valueAverage),
-          valueEntries,
-          "Value",
-          formatBooleanAnswer
+        const scoreEntries = getFlattenedFieldEntries(ev, key)
+          .map((entry) => ({ ...entry, value: normalizeScore(entry.value) }))
+          .filter((entry) => entry.value !== null);
+        const scoreAverage = averageNumbers(scoreEntries.map((entry) => entry.value));
+        const scoreCell = renderHoverDetail(
+          formatScore(scoreAverage),
+          scoreEntries,
+          "Score",
+          describeScore
         );
-        const confidenceCell = renderHoverDetail(
-          formatAverageConfidence(confidenceAverage),
-          confidenceEntries,
-          "Confidence",
-          (value) => `${Number(value).toFixed(1)}/10`
-        );
-        return `<tr><th>${escapeHtml(long)}</th><td>${valueCell}</td><td>${confidenceCell}</td></tr>`;
+        return `<tr><th>${escapeHtml(long)}</th><td>${scoreCell}</td></tr>`;
       }).join("");
-      const barriers = [
-        ["barrier_stopped_immediate_ignition", "Barrier stopped immediate ignition"],
-        ["barrier_stopped_delayed_ignition", "Barrier stopped delayed ignition"],
-      ].map(([key, label]) => {
-        const valueEntries = getFlattenedFieldEntries(ev, key).filter((entry) => typeof entry.value === "boolean");
-        const valueAverage = averageBooleans(valueEntries.map((entry) => entry.value));
-        const valueCell = renderHoverDetail(
-          formatAverageBoolean(valueAverage),
-          valueEntries,
-          "Value",
-          formatBooleanAnswer
+      const barriers = BARRIER_QUESTIONS.map(([key, label]) => {
+        const scoreEntries = getFlattenedFieldEntries(ev, key)
+          .map((entry) => ({ ...entry, value: normalizeScore(entry.value) }))
+          .filter((entry) => entry.value !== null);
+        const scoreAverage = averageNumbers(scoreEntries.map((entry) => entry.value));
+        const scoreCell = renderHoverDetail(
+          formatScore(scoreAverage),
+          scoreEntries,
+          "Score",
+          describeScore
         );
-        return `<tr><th>${escapeHtml(label)}</th><td>${valueCell}</td><td>—</td></tr>`;
+        return `<tr><th>${escapeHtml(label)}</th><td>${scoreCell}</td></tr>`;
       }).join("");
-      const exclusions = [
-        ["exclude_not_pure_h2", "Not pure H2"],
-        ["exclude_not_gaseous_h2", "Not gaseous H2"],
-        ["exclude_no_loc", "No loss of containment"],
-      ].map(([key, label]) => {
-        const valueEntries = getFlattenedFieldEntries(ev, key).filter((entry) => typeof entry.value === "boolean");
-        const valueAverage = averageBooleans(valueEntries.map((entry) => entry.value));
-        const valueCell = renderHoverDetail(
-          formatAverageBoolean(valueAverage),
-          valueEntries,
-          "Value",
-          formatBooleanAnswer
+      const inclusions = INCLUSION_QUESTIONS.map(([key, label]) => {
+        const scoreEntries = getFlattenedFieldEntries(ev, key)
+          .map((entry) => ({ ...entry, value: normalizeScore(entry.value) }))
+          .filter((entry) => entry.value !== null);
+        const scoreAverage = averageNumbers(scoreEntries.map((entry) => entry.value));
+        const scoreCell = renderHoverDetail(
+          formatScore(scoreAverage),
+          scoreEntries,
+          "Score",
+          describeScore
         );
-        return `<tr><th>${escapeHtml(label)}</th><td>${valueCell}</td><td>—</td></tr>`;
+        return `<tr><th>${escapeHtml(label)}</th><td>${scoreCell}</td></tr>`;
       }).join("");
       return `
         <div class="answers-block">
           <div class="answers-title">Outcome questions</div>
           <table class="answer-table">
             <colgroup>${colgroup}</colgroup>
-            <thead><tr><th>Key</th><th>Value</th><th>Confidence</th></tr></thead>
+            <thead><tr><th>Key</th><th>Score</th></tr></thead>
             <tbody>${qa}</tbody>
           </table>
         </div>
@@ -2296,23 +2380,25 @@
           <div class="answers-title">Barriers</div>
           <table class="answer-table">
             <colgroup>${colgroup}</colgroup>
-            <thead><tr><th>Barrier</th><th>Value</th><th></th></tr></thead>
+            <thead><tr><th>Barrier</th><th>Score</th></tr></thead>
             <tbody>${barriers}</tbody>
           </table>
         </div>
         <div class="answers-block">
-          <div class="answers-title">Exclusions</div>
+          <div class="answers-title">Inclusion criteria</div>
           <table class="answer-table">
             <colgroup>${colgroup}</colgroup>
-            <thead><tr><th>Criteria</th><th>Value</th><th></th></tr></thead>
-            <tbody>${exclusions}</tbody>
+            <thead><tr><th>Criteria</th><th>Score</th></tr></thead>
+            <tbody>${inclusions}</tbody>
           </table>
         </div>
       `;
     }
 
     function matchesConditions(valueMap, conditions) {
-      return Object.entries(conditions).every(([key, expected]) => valueMap[key] === expected);
+      return Object.entries(conditions).every(([key, expected]) =>
+        interpretConditionValue(key, valueMap[key]) === expected
+      );
     }
 
     function inferOutcome(ev) {
@@ -2350,13 +2436,10 @@
       return Object.keys(childConditions || {}).find((key) => !parentKeys.has(key)) || null;
     }
 
-    function confidenceWeight(ev, key, useWeights) {
+    function scoreWeight(ev, key, useWeights) {
       if (!key) return 1;
       if (!useWeights) return 1;
-      const conf = Number(ev?.[`${key}_confidence`]);
-      if (!Number.isFinite(conf)) return 0;
-      const clamped = Math.min(Math.max(conf, 0), 10);
-      return clamped / 10;
+      return scoreStrength(ev?.[key]);
     }
 
     function betaIntervalWidth(invFn, lowerProb, mass) {
@@ -2597,8 +2680,8 @@
         betaTooltipTitle.textContent = `${label}: ${branch}`;
       }
       if (betaTooltipMeta) {
-        const alphaText = formatBetaParam(posterior.alpha, useConfidenceWeights);
-        const betaText = formatBetaParam(posterior.beta, useConfidenceWeights);
+        const alphaText = formatBetaParam(posterior.alpha, useScoreWeights);
+        const betaText = formatBetaParam(posterior.beta, useScoreWeights);
         betaTooltipMeta.textContent = `Beta(${alphaText}, ${betaText})`;
       }
       if (betaTooltipRange) {
@@ -2625,9 +2708,9 @@
         .map((ev) => getTreeProjection(ev, activeModelId))
         .filter(Boolean);
       const total = treeEvents.length;
-      const notPureH2 = treeEvents.filter((ev) => ev.exclude_not_pure_h2).length;
-      const notGaseousH2 = treeEvents.filter((ev) => ev.exclude_not_gaseous_h2).length;
-      const noLoc = treeEvents.filter((ev) => ev.exclude_no_loc).length;
+      const notPureH2 = treeEvents.filter((ev) => !scoreToBool(ev.pure_h2)).length;
+      const notGaseousH2 = treeEvents.filter((ev) => !scoreToBool(ev.gaseous_h2)).length;
+      const noLoc = treeEvents.filter((ev) => !scoreToBool(ev.loss_of_containment)).length;
       const barrierImmediateCount = treeEvents.filter((ev) => barrierImmediate(ev)).length;
       const barrierDelayedCount = treeEvents.filter((ev) => barrierDelayed(ev)).length;
       return { total, notPureH2, notGaseousH2, noLoc, barrierImmediateCount, barrierDelayedCount };
@@ -2659,7 +2742,7 @@
           const branchKey = parent ? determineBranchKey(node.conditions, parent.conditions) : null;
           const parentMatches = parent ? matchesFor(parent.conditions) : [];
           const nodeMatches = matchesFor(node.conditions);
-          const weightFn = (ev) => confidenceWeight(ev, branchKey, useWeights);
+          const weightFn = (ev) => scoreWeight(ev, branchKey, useWeights);
           const parentWeightSum = parentMatches.reduce((sum, ev) => sum + weightFn(ev), 0);
           const nodeWeightSum = nodeMatches.reduce((sum, ev) => sum + weightFn(ev), 0);
           return {
@@ -2720,7 +2803,7 @@
             const events = await loadModelEventsForComparison(model);
             const treeEvents = getTreeEventsFromData(events);
             const probabilities = computeTreeDecisionProbabilities(treeEvents, TREE_DEFINITION, {
-              useWeights: useConfidenceWeights,
+              useWeights: useScoreWeights,
             });
             return {
               model,
@@ -2753,7 +2836,7 @@
           }
         }
 
-        summary.textContent = `Average absolute difference across ${probabilityIds.length} displayed branch probabilities. Filters and confidence weighting match the current tree.`;
+        summary.textContent = `Average absolute difference across ${probabilityIds.length} displayed branch probabilities. Filters and score weighting match the current tree.`;
         renderModelComparisonRows(rows);
       } catch (err) {
         console.error(err);
@@ -2861,7 +2944,7 @@
 
         const parentMatches = matchesFor(parent.conditions);
         const nodeMatches = matchesFor(node.conditions);
-        const weightFn = (ev) => confidenceWeight(ev, branchKey, useWeights);
+        const weightFn = (ev) => scoreWeight(ev, branchKey, useWeights);
         const parentWeightSum = parentMatches.reduce((sum, ev) => sum + weightFn(ev), 0);
         const nodeWeightSum = nodeMatches.reduce((sum, ev) => sum + weightFn(ev), 0);
 
@@ -3397,14 +3480,14 @@
 
     function updateControlCounts() {
       const counts = computeEventCounts();
-      const notPureLabel = document.getElementById("labelNotPureH2");
-      const notGaseousLabel = document.getElementById("labelNotGaseousH2");
-      const noLocLabel = document.getElementById("labelNoLoc");
+      const notPureLabel = document.getElementById("labelPureH2");
+      const notGaseousLabel = document.getElementById("labelGaseousH2");
+      const noLocLabel = document.getElementById("labelLossOfContainment");
       const barrierImmediateLabel = document.getElementById("labelBarrierImmediate");
       const barrierDelayedLabel = document.getElementById("labelBarrierDelayed");
-      if (notPureLabel) notPureLabel.textContent = `Include not pure H2 (${counts.notPureH2})`;
-      if (notGaseousLabel) notGaseousLabel.textContent = `Include not gaseous H2 (${counts.notGaseousH2})`;
-      if (noLocLabel) noLocLabel.textContent = `Include no loss of containment (${counts.noLoc})`;
+      if (notPureLabel) notPureLabel.textContent = `Only pure H2 (${counts.notPureH2})`;
+      if (notGaseousLabel) notGaseousLabel.textContent = `Only gaseous H2 (${counts.notGaseousH2})`;
+      if (noLocLabel) noLocLabel.textContent = `Only loss of containment (${counts.noLoc})`;
       if (barrierImmediateLabel) barrierImmediateLabel.textContent = `Include barrier-stopped immediate ignition (${counts.barrierImmediateCount})`;
       if (barrierDelayedLabel) barrierDelayedLabel.textContent = `Include barrier-stopped delayed ignition (${counts.barrierDelayedCount})`;
     }
@@ -3420,7 +3503,7 @@
         credibleLevel,
         showDistribution: showDistributionAlways,
         summaryText: summary,
-        useWeights: useConfidenceWeights,
+        useWeights: useScoreWeights,
         containerId: "treeContainer",
         statusId: "treeStatus",
       });
@@ -3439,7 +3522,6 @@
       if (!ev) return;
       const details = document.getElementById("details");
       const selectedRecord = getModelRecord(ev, activeModelId);
-      const outcome = escapeHtml(getAggregateOutcome(ev) || "");
       const sys = escapeHtml(selectedRecord?.system_prompt || ev.system_prompt || "N/A");
       const userPrompt = escapeHtml(selectedRecord?.user_prompt || ev.user_prompt || "No prompt captured.");
       const description = escapeHtml(ev.description || "No description available.");
@@ -3451,10 +3533,10 @@
         <div class="card">
           <div class="card-header details-header">
             <h2 class="card-title-main">${escapeHtml(ev.title || "Untitled Event")}</h2>
-            <div class="${statusClass}">${excluded ? "Excluded" : "Included"}</div>
+            ${renderStatusBadge(ev, statusClass)}
           </div>
           <div class="pill">Event ID: <span class="pill-value">${escapeHtml(ev.event_id || "N/A")}</span></div>
-          ${outcome ? `<div class="pill">Outcome: <span class="pill-value">${outcome}</span></div>` : ""}
+          ${renderOutcomePill(ev)}
           <div class="card-section">
             <h2>Event Description</h2>
             <pre>${description}</pre>
@@ -3699,6 +3781,14 @@
       if (panel) panel.classList.add("active");
       document.body.setAttribute("data-view", tab);
       setListOverlayOpen(false);
+      if (tab === "tree" && eventsData.length) {
+        const rerender = () => updateTree();
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(rerender);
+        } else {
+          rerender();
+        }
+      }
     }
 
     function setAboutOpen(open) {
@@ -3797,7 +3887,18 @@
         if (!button) return;
         const nextId = button.dataset.modelId;
         if (!nextId || nextId === activeModelId) return;
+        activeRealizationIndex = 0;
         applyModelSelection(nextId);
+      });
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest(".js-realization-button");
+        if (!button) return;
+        const nextIndex = Number(button.dataset.realizationIndex);
+        if (!Number.isInteger(nextIndex) || nextIndex === activeRealizationIndex) return;
+        activeRealizationIndex = nextIndex;
+        if (selectedIndex !== null) {
+          selectEvent(selectedIndex);
+        }
       });
       document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
@@ -3817,32 +3918,32 @@
           refreshList({ ensureSelection: true });
         });
       }
-      const includeNotPure = document.getElementById("includeNotPureH2");
-      const includeNotGaseous = document.getElementById("includeNotGaseousH2");
-      const includeNoLocToggle = document.getElementById("includeNoLoc");
+      const includeNotPure = document.getElementById("onlyPureH2");
+      const includeNotGaseous = document.getElementById("onlyGaseousH2");
+      const includeNoLocToggle = document.getElementById("onlyLossOfContainment");
       const includeBarrier1 = document.getElementById("includeBarrierImmediate");
       const includeBarrier2 = document.getElementById("includeBarrierDelayed");
 
       if (includeNotPure) {
-        includeNotPureH2 = includeNotPure.checked;
+        onlyPureH2 = includeNotPure.checked;
         includeNotPure.addEventListener("change", (e) => {
-          includeNotPureH2 = e.target.checked;
+          onlyPureH2 = e.target.checked;
           updateTree();
           refreshList({ ensureSelection: true });
         });
       }
       if (includeNotGaseous) {
-        includeNotGaseousH2 = includeNotGaseous.checked;
+        onlyGaseousH2 = includeNotGaseous.checked;
         includeNotGaseous.addEventListener("change", (e) => {
-          includeNotGaseousH2 = e.target.checked;
+          onlyGaseousH2 = e.target.checked;
           updateTree();
           refreshList({ ensureSelection: true });
         });
       }
       if (includeNoLocToggle) {
-        includeNoLoc = includeNoLocToggle.checked;
+        onlyLossOfContainment = includeNoLocToggle.checked;
         includeNoLocToggle.addEventListener("change", (e) => {
-          includeNoLoc = e.target.checked;
+          onlyLossOfContainment = e.target.checked;
           updateTree();
           refreshList({ ensureSelection: true });
         });
@@ -3921,9 +4022,9 @@
       }
       const confidenceWeightsToggle = document.getElementById("toggleConfidenceWeights");
       if (confidenceWeightsToggle) {
-        useConfidenceWeights = confidenceWeightsToggle.checked;
+        useScoreWeights = confidenceWeightsToggle.checked;
         confidenceWeightsToggle.addEventListener("change", (e) => {
-          useConfidenceWeights = e.target.checked;
+          useScoreWeights = e.target.checked;
           updateTree();
         });
       }
