@@ -416,7 +416,7 @@ def _model_slug(model: str) -> str:
 
 
 if __name__ == "__main__":
-    gen = 1
+    gen = 0
     port = 4000
 
     if gen:
@@ -424,6 +424,6 @@ if __name__ == "__main__":
             events_path = f"events-{_model_slug(model_config['model'])}.json"
             process_events(model_config=model_config, save_path=events_path)
 
-    save_events_manifest(LLMS)
+        save_events_manifest(LLMS)
 
     run_dashboard(port=port)
