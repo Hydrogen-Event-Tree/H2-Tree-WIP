@@ -1,16 +1,16 @@
 {
   "models": [
     {
-      "name": "gpt-oss-20b",
-      "events_path": "events-gpt-oss-20b.json",
-      "model": "gpt-oss:20b"
-    },
-    {
-      "name": "Gemma3-1B",
+      "name": "Gemma3 1B",
       "events_path": "events-gemma3-1b.json",
       "model": "gemma3:1b"
+    },
+    {
+      "name": "Gemma3 4B",
+      "events_path": "events-gemma3-4b.json",
+      "model": "gemma3:4b"
     }
   ],
-  "answers_per_model": 2,
-  "default_model": "gpt-oss:20b"
+  "answers_per_model": 4,
+  "default_model": "gemma3:1b"
 }

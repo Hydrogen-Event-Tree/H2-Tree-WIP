@@ -12,8 +12,8 @@ from dashboard import run as run_dashboard
 from parse_hiad import build_event_record, read_enriched_events
 
 FILE_PATH = "HIAD.xlsx"
-EVENTS_TO_INCLUDE = 2
-ANSWERS_PER_MODEL = 2
+EVENTS_TO_INCLUDE = 2000
+ANSWERS_PER_MODEL = 4
 DEFAULT_MAX_WORKERS = 8
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -32,8 +32,9 @@ LLMS = [
     #    "provider": "google-ai-studio",
     #},
     #{"name": "Qwen3.5-4B", "model": "qwen3.5:4b", "provider": "ollama"},
-    {"name": "gpt-oss-20b", "model": "gpt-oss:20b", "provider": "ollama"},
-    {"name": "Gemma3-1B", "model": "gemma3:1b", "provider": "ollama"},
+    #{"name": "gpt-oss-20b", "model": "gpt-oss:20b", "provider": "ollama"},
+    {"name": "Gemma3 1B", "model": "gemma3:1b", "provider": "ollama"},
+    {"name": "Gemma3 4B", "model": "gemma3:4b", "provider": "ollama"},
 ]
 
 RESPONSE_SCHEMA = {
@@ -415,7 +416,7 @@ def _model_slug(model: str) -> str:
 
 
 if __name__ == "__main__":
-    gen = 0
+    gen = 1
     port = 4000
 
     if gen:

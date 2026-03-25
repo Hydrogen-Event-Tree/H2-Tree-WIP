@@ -1,4 +1,5 @@
 import warnings
+from numbers import Real
 
 import pandas as pd
 
@@ -8,12 +9,34 @@ PROMPT_IGNORED_COLUMNS = {
     "rocket",
 }
 
+YES_NO_COLUMNS = {
+    "System design error",
+    "Material/ manufacturing error",
+    "Installation error",
+    "Job factors ",
+    "Human factors",
+    "Management factors",
+    "Environment",
+    "Unknown",
+}
+
+REFERENCE_COLUMNS = [
+    "Sources categories",
+    "1st Reference & weblink",
+    "2nd Reference &weblink",
+    "3rd Reference & weblink",
+    "4th Reference & weblink",
+    "5th Documents & links",
+    "6th Documents & links",
+    "7th Documents & links",
+]
+
 PROMPT_SECTIONS = [
     (
         "Event Overview",
         [
             ("Event ID", "Event ID"),
-            ("Q", "Q"),
+            ("Quality", "Q"),
             ("Event Initiating system", "Event Initiating system"),
             ("Classification of the physical effects", "Classification of the physical effects"),
             ("Nature of the consequences", "Nature of the consequences"),
@@ -83,10 +106,13 @@ PROMPT_SECTIONS = [
             ("Emergency action", "Emergency action"),
             ("Emergency evaluation", "Emergency evaluation"),
             ("Release type", "Release type"),
-            ("Involved substances", "Involved substances"),
-            ("Concentration [% vol]", "[% vol]"),
+            ("Involved substances", "Involved substances\n[% vol]"),
             ("Probable ignition source", "Probable IGNITION SOURCE"),
         ],
+    ),
+    (
+        "References",
+        [(column, column) for column in REFERENCE_COLUMNS],
     ),
 ]
 
@@ -153,6 +179,45 @@ def clean_value(value):
     return text or None
 
 
+def format_prompt_value(column, value):
+    text = clean_value(value)
+    if not text:
+        return None
+
+    if column in YES_NO_COLUMNS:
+        normalized = text.lower()
+        if normalized in {"1", "1.0", "true", "yes"}:
+            return "Yes"
+        if normalized in {"0", "0.0", "false", "no"}:
+            return "No"
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        if isinstance(value, Real):
+            if value == 1:
+                return "Yes"
+            if value == 0:
+                return "No"
+
+    if column == "Summary root causes":
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return "; ".join(lines) or None
+
+    return text
+
+
+def format_prompt_field(label, column, value):
+    formatted = format_prompt_value(column, value)
+    if not formatted:
+        return None
+
+    lines = formatted.splitlines()
+    if len(lines) == 1:
+        return f"- **{label}:** {lines[0]}"
+
+    continuation = "\n".join(f"  {line}" if line else "  " for line in lines[1:])
+    return f"- **{label}:** {lines[0]}\n{continuation}"
+
+
 def build_event_markdown(row) -> str:
     title = clean_value(row.get("Event Title")) or "Untitled Event"
     description = clean_value(row.get("Event full description")) or "No description available."
@@ -162,10 +227,10 @@ def build_event_markdown(row) -> str:
     for section_title, field_specs in PROMPT_SECTIONS:
         lines = []
         for label, column in field_specs:
-            value = clean_value(row.get(column))
-            if not value:
+            formatted_field = format_prompt_field(label, column, row.get(column))
+            if not formatted_field:
                 continue
-            lines.append(f"- **{label}:** {value}")
+            lines.append(formatted_field)
             used_columns.add(column)
 
         if lines:
@@ -175,11 +240,11 @@ def build_event_markdown(row) -> str:
 
     additional_fields = []
     for col in row.index:
-        if col in PROMPT_IGNORED_COLUMNS or col in used_columns:
+        if col in PROMPT_IGNORED_COLUMNS or col in used_columns or col.startswith("Unnamed:"):
             continue
-        cleaned = clean_value(row.get(col))
-        if cleaned:
-            additional_fields.append(f"- **{col}:** {cleaned}")
+        formatted_field = format_prompt_field(col, col, row.get(col))
+        if formatted_field:
+            additional_fields.append(formatted_field)
 
     if additional_fields:
         sections.append("## Additional HIAD Fields")
