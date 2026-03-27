@@ -1,4 +1,6 @@
 import json
+import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tqdm import tqdm
@@ -13,28 +15,50 @@ from parse_hiad import build_event_record, read_enriched_events
 
 FILE_PATH = "HIAD.xlsx"
 EVENTS_TO_INCLUDE = 2000
-ANSWERS_PER_MODEL = 4
+ANSWERS_PER_MODEL = 2
 DEFAULT_MAX_WORKERS = 8
+OPENROUTER_DEFAULT_MAX_WORKERS = 4
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY = ""
+OPENROUTER_REASONING_EFFORT = "high"
+OPENROUTER_TIMEOUT_SECONDS = 40
+OPENROUTER_MAX_ATTEMPTS = 4
+OPENROUTER_RETRY_BACKOFF_SECONDS = 20
 GEMINI_API_KEY = ""
 
 LLMS = [
-    #{
-    #    "name": "Gemini 3 Pro",
-    #    "model": "gemini-3-pro-preview",
-    #    "provider": "google-ai-studio",
-    #},
-    #{
-    #    "name": "Gemini 3 Flash",
-    #    "model": "gemini-3-flash-preview",
-    #    "provider": "google-ai-studio",
-    #},
+    {
+        "name": "GPT 5.4 Nano",
+        "model": "openai/gpt-5.4-nano",
+        "provider": "openrouter",
+    },
+    {
+        "name": "Gemini 3.1 Flash Lite",
+        "model": "google/gemini-3.1-flash-lite-preview",
+        "provider": "openrouter",
+    },
+    {
+        "name": "Grok 4.1 Fast",
+        "model": "x-ai/grok-4.1-fast",
+        "provider": "openrouter",
+    },
+    {
+        "name": "Mistral Small 4",
+        "model": "mistralai/mistral-small-2603",
+        "provider": "openrouter",
+    },
+    {
+        "name": "Qwen3.5 397B",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "provider": "openrouter",
+    },
     #{"name": "Qwen3.5-4B", "model": "qwen3.5:4b", "provider": "ollama"},
+    #{"name": "Gemma3 1B", "model": "gemma3:1b", "provider": "ollama"},
+    #{"name": "Ministral 3 Reasoning 14B", "model": "seamon67/Ministral-3-Reasoning:14b", "provider": "ollama"},
+    #{"name": "Qwen3.5 35B", "model": "qwen3.5:35b", "provider": "ollama"},
     #{"name": "gpt-oss-20b", "model": "gpt-oss:20b", "provider": "ollama"},
-    {"name": "Gemma3 1B", "model": "gemma3:1b", "provider": "ollama"},
-    {"name": "Gemma3 4B", "model": "gemma3:4b", "provider": "ollama"},
+    #{"name": "GLM 4.7 Flash", "model": "glm-4.7-flash", "provider": "ollama"},
 ]
 
 RESPONSE_SCHEMA = {
@@ -82,6 +106,8 @@ SYSTEM_PROMPT = """Fill every field in the JSON schema with a single integer fro
 - 4-1 = no, with increasing certainty
 - 0 = no with full certainty
 
+Return only raw JSON. Do not wrap it in markdown or code fences.
+
 Schema: {continuous_release:int, immediate_ignition:int, barrier_stopped_immediate_ignition:int, delayed_ignition:int, barrier_stopped_delayed_ignition:int, confined_space:int, pure_h2:int, gaseous_h2:int, loss_of_containment:int}. Use the provided event details to decide.
 
 Continuous release rubric: Score high if hydrogen release persisted over time rather than a single brief discharge.
@@ -121,10 +147,14 @@ def _parse_genai_response(response):
     parsed = getattr(response, "parsed", None)
     if parsed is not None:
         if hasattr(parsed, "model_dump"):
-            return parsed.model_dump(), ""
+            return (
+                _validate_response_payload(parsed.model_dump(), json.dumps(parsed.model_dump(), ensure_ascii=True)),
+                "",
+                False,
+            )
         if isinstance(parsed, dict):
-            return parsed, ""
-        return parsed, ""
+            return _validate_response_payload(parsed, json.dumps(parsed, ensure_ascii=True)), "", False
+        raise ValueError(f"LLM returned unsupported parsed content: {parsed}")
 
     candidates = getattr(response, "candidates", None) or []
     parts = []
@@ -147,11 +177,8 @@ def _parse_genai_response(response):
     reasoning = "\n".join(reasoning_parts).strip()
     if not text:
         raise ValueError("LLM returned no text content.")
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM returned non-JSON content: {text}") from exc
-    return parsed, reasoning
+    parsed = _parse_json_response(text)
+    return parsed, reasoning, False
 
 
 def _serialize_reasoning(value):
@@ -165,6 +192,86 @@ def _serialize_reasoning(value):
         return str(value)
 
 
+def _normalize_reasoning_trace(value):
+    shortened = False
+
+    def normalize_item(item):
+        nonlocal shortened
+        if item is None:
+            return ""
+        if isinstance(item, str):
+            text = item.strip()
+            return text
+        if isinstance(item, list):
+            parts = [normalize_item(part) for part in item]
+            return "\n\n".join(part for part in parts if part)
+        if isinstance(item, dict):
+            item_type = item.get("type")
+            if item_type == "reasoning.encrypted":
+                shortened = True
+                return ""
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+            if item_type == "reasoning.summary":
+                summary = item.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    return summary.strip()
+                if isinstance(summary, list):
+                    parts = [normalize_item(part) for part in summary]
+                    return "\n\n".join(part for part in parts if part)
+            return ""
+        return str(item).strip()
+
+    return normalize_item(value).strip(), shortened
+
+
+def _validate_response_payload(parsed, raw_text: str):
+    if not isinstance(parsed, dict):
+        raise ValueError(f"LLM returned non-object JSON content: {raw_text}")
+
+    expected_fields = set(ANSWER_FIELDS)
+    actual_fields = set(parsed.keys())
+    missing_fields = expected_fields - actual_fields
+    extra_fields = actual_fields - expected_fields
+    if missing_fields or extra_fields:
+        problems = []
+        if missing_fields:
+            problems.append(f"missing fields: {sorted(missing_fields)}")
+        if extra_fields:
+            problems.append(f"unexpected fields: {sorted(extra_fields)}")
+        raise ValueError(f"LLM returned invalid JSON schema ({'; '.join(problems)}): {raw_text}")
+
+    for field in ANSWER_FIELDS:
+        value = parsed[field]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"LLM returned non-integer value for {field}: {raw_text}")
+        if not 0 <= value <= 10:
+            raise ValueError(f"LLM returned out-of-range value for {field}: {raw_text}")
+
+    return parsed
+
+
+def _parse_json_response(content):
+    if not isinstance(content, str):
+        raise ValueError(f"LLM returned non-text content: {content}")
+
+    text = content.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.fullmatch(r"```(?i:json)?\s*(.*?)\s*```", text, re.DOTALL)
+        if not match:
+            raise ValueError(f"LLM returned non-JSON content: {content}")
+        fenced_text = match.group(1).strip()
+        try:
+            parsed = json.loads(fenced_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"LLM returned non-JSON content: {content}") from exc
+
+    return _validate_response_payload(parsed, text)
+
+
 def _ask_ollama(prompt: str, system_prompt: str, model: str, seed: int | None = None):
     messages = []
     if system_prompt:
@@ -173,7 +280,7 @@ def _ask_ollama(prompt: str, system_prompt: str, model: str, seed: int | None = 
 
     request_kwargs = {
         "model": model,
-        "think": False,
+        "think": True,
         "format": RESPONSE_SCHEMA,
         "messages": messages,
     }
@@ -196,20 +303,28 @@ def _ask_ollama(prompt: str, system_prompt: str, model: str, seed: int | None = 
     )
     reasoning = _serialize_reasoning(reasoning)
 
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM returned non-JSON content: {content}") from exc
-    return parsed, reasoning
+    parsed = _parse_json_response(content)
+    return parsed, reasoning, False
 
 
-def _ask_openrouter(prompt: str, system_prompt: str, model: str, seed: int | None = None):
+def _ask_openrouter(prompt: str, system_prompt: str, model_config: dict, seed: int | None = None):
+    model = model_config["model"]
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    client = OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+    reasoning_effort = model_config.get("reasoning_effort") or OPENROUTER_REASONING_EFFORT
+    request_timeout_seconds = model_config.get("timeout_seconds") or OPENROUTER_TIMEOUT_SECONDS
+    max_attempts = max(1, int(model_config.get("max_attempts") or OPENROUTER_MAX_ATTEMPTS))
+    retry_backoff_seconds = model_config.get("retry_backoff_seconds") or OPENROUTER_RETRY_BACKOFF_SECONDS
+
+    client = OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_BASE_URL,
+        timeout=request_timeout_seconds,
+        max_retries=0,
+    )
     request_kwargs = {
         "model": model,
         "messages": messages,
@@ -217,40 +332,52 @@ def _ask_openrouter(prompt: str, system_prompt: str, model: str, seed: int | Non
         "extra_body": {
             "plugins": [{"id": "response-healing"}],
             "include_reasoning": True,
-            "reasoning": {"enabled": True},
+            "reasoning": {"effort": reasoning_effort},
         },
     }
     if seed is not None:
         request_kwargs["seed"] = seed
 
-    response = client.chat.completions.create(
-        **request_kwargs,
-    )
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = client.chat.completions.create(
+                **request_kwargs,
+            )
+            message = response.choices[0].message
 
-    message = response.choices[0].message
+            if hasattr(message, "model_dump"):
+                payload = message.model_dump()
+                content = payload.get("content", "")
+                reasoning_details = payload.get("reasoning_details")
+                reasoning_text = payload.get("reasoning")
+            elif isinstance(message, dict):
+                content = message.get("content", "")
+                reasoning_details = message.get("reasoning_details")
+                reasoning_text = message.get("reasoning")
+            else:
+                content = getattr(message, "content", "")
+                reasoning_details = getattr(message, "reasoning_details", None)
+                reasoning_text = getattr(message, "reasoning", None)
 
-    if hasattr(message, "model_dump"):
-        payload = message.model_dump()
-        content = payload.get("content", "")
-        reasoning_details = payload.get("reasoning_details")
-        reasoning_text = payload.get("reasoning")
-    elif isinstance(message, dict):
-        content = message.get("content", "")
-        reasoning_details = message.get("reasoning_details")
-        reasoning_text = message.get("reasoning")
-    else:
-        content = getattr(message, "content", "")
-        reasoning_details = getattr(message, "reasoning_details", None)
-        reasoning_text = getattr(message, "reasoning", None)
+            reasoning_from_details, reasoning_is_shortened = _normalize_reasoning_trace(reasoning_details)
+            reasoning_from_text, shortened_from_text = _normalize_reasoning_trace(reasoning_text)
+            reasoning = reasoning_from_details or reasoning_from_text
+            reasoning_is_shortened = reasoning_is_shortened or shortened_from_text
 
-    reasoning = reasoning_details if reasoning_details is not None else reasoning_text or ""
-    reasoning = _serialize_reasoning(reasoning)
-
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM returned non-JSON content: {content}") from exc
-    return parsed, reasoning
+            parsed = _parse_json_response(content)
+            return parsed, reasoning, reasoning_is_shortened
+        except ValueError as exc:
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    f"OpenRouter returned invalid structured output for {model} after {max_attempts} attempts: {exc}"
+                ) from exc
+            time.sleep(retry_backoff_seconds * attempt)
+        except Exception as exc:
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    f"OpenRouter request failed for {model} after {max_attempts} attempts: {exc}"
+                ) from exc
+            time.sleep(retry_backoff_seconds * attempt)
 
 
 def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str, seed: int | None = None):
@@ -287,7 +414,7 @@ def ask(prompt: str, system_prompt: str, model_config: dict, seed: int | None = 
     if not model:
         raise ValueError(f"Invalid model config: {model_config!r}")
     if provider == "openrouter":
-        return _ask_openrouter(prompt=prompt, system_prompt=system_prompt, model=model, seed=seed)
+        return _ask_openrouter(prompt=prompt, system_prompt=system_prompt, model_config=model_config, seed=seed)
     if provider == "google-ai-studio":
         return _ask_google_ai_studio(prompt=prompt, system_prompt=system_prompt, model=model, seed=seed)
     if provider == "ollama":
@@ -300,29 +427,42 @@ def ask(prompt: str, system_prompt: str, model_config: dict, seed: int | None = 
     raise ValueError(f"Unsupported provider: {provider}")
 
 def _run_model_request(record: dict, model_config: dict, realization_index: int):
-    result, reasoning = ask(
+    result, reasoning, reasoning_is_shortened = ask(
         prompt=record["user_prompt"],
         system_prompt=record["system_prompt"],
         model_config=model_config,
         seed=realization_index + 1,
     )
-    return realization_index, result, reasoning
+    return realization_index, result, reasoning, reasoning_is_shortened
 
 
 def _initialize_event_result(record: dict):
     result = {
         **record,
         "reasoning": ["" for _ in range(ANSWERS_PER_MODEL)],
+        "reasoning_is_shortened": [False for _ in range(ANSWERS_PER_MODEL)],
     }
     for field in ANSWER_FIELDS:
         result[field] = [None for _ in range(ANSWERS_PER_MODEL)]
     return result
 
 
-def _store_realization(event_result: dict, realization_index: int, result: dict, reasoning: str):
+def _store_realization(
+    event_result: dict,
+    realization_index: int,
+    result: dict,
+    reasoning: str,
+    reasoning_is_shortened: bool,
+):
     event_result["reasoning"][realization_index] = reasoning
+    event_result["reasoning_is_shortened"][realization_index] = reasoning_is_shortened
     for field in ANSWER_FIELDS:
         event_result[field][realization_index] = result.get(field)
+
+
+def _store_failed_realization(event_result: dict, realization_index: int, error: Exception):
+    event_result["reasoning"][realization_index] = f"ERROR: {error}"
+    event_result["reasoning_is_shortened"][realization_index] = False
 
 
 def process_events(model_config, save_path=None):
@@ -334,7 +474,10 @@ def process_events(model_config, save_path=None):
     model_label = model_config.get("name") or model_config.get("model") or "model"
     provider = model_config.get("provider", "ollama")
     if provider in ("openrouter", "google-ai-studio"):
-        max_workers = model_config.get("max_workers") or DEFAULT_MAX_WORKERS
+        if provider == "openrouter":
+            max_workers = model_config.get("max_workers") or OPENROUTER_DEFAULT_MAX_WORKERS
+        else:
+            max_workers = model_config.get("max_workers") or DEFAULT_MAX_WORKERS
         results_by_index = [None] * len(events)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
@@ -357,8 +500,21 @@ def process_events(model_config, save_path=None):
             ) as progress:
                 for future in as_completed(futures):
                     idx, realization_index = futures[future]
-                    _, result, reasoning = future.result()
-                    _store_realization(results_by_index[idx], realization_index, result, reasoning)
+                    try:
+                        _, result, reasoning, reasoning_is_shortened = future.result()
+                    except Exception as exc:
+                        tqdm.write(
+                            f"{model_label}: event {idx + 1}, realization {realization_index + 1} failed: {exc}"
+                        )
+                        _store_failed_realization(results_by_index[idx], realization_index, exc)
+                    else:
+                        _store_realization(
+                            results_by_index[idx],
+                            realization_index,
+                            result,
+                            reasoning,
+                            reasoning_is_shortened,
+                        )
                     progress.update(1)
         results = results_by_index
     else:
@@ -370,8 +526,16 @@ def process_events(model_config, save_path=None):
             record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
             event_result = _initialize_event_result(record)
             for realization_index in range(ANSWERS_PER_MODEL):
-                _, result, reasoning = _run_model_request(record, model_config, realization_index)
-                _store_realization(event_result, realization_index, result, reasoning)
+                _, result, reasoning, reasoning_is_shortened = _run_model_request(
+                    record, model_config, realization_index
+                )
+                _store_realization(
+                    event_result,
+                    realization_index,
+                    result,
+                    reasoning,
+                    reasoning_is_shortened,
+                )
                 event_progress.update(1)
             results.append(event_result)
         event_progress.close()
@@ -416,7 +580,7 @@ def _model_slug(model: str) -> str:
 
 
 if __name__ == "__main__":
-    gen = 0
+    gen = 1
     port = 4000
 
     if gen:

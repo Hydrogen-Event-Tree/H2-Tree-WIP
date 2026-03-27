@@ -1,16 +1,26 @@
 {
   "models": [
     {
-      "name": "Gemma3 1B",
-      "events_path": "events-gemma3-1b.json",
-      "model": "gemma3:1b"
+      "name": "GPT 5.4 Nano",
+      "events_path": "events-openai-gpt-5.4-nano.json",
+      "model": "openai/gpt-5.4-nano"
     },
     {
-      "name": "Gemma3 4B",
-      "events_path": "events-gemma3-4b.json",
-      "model": "gemma3:4b"
+      "name": "Gemini 3.1 Flash Lite",
+      "events_path": "events-google-gemini-3.1-flash-lite-preview.json",
+      "model": "google/gemini-3.1-flash-lite-preview"
+    },
+    {
+      "name": "Grok 4.1 Fast",
+      "events_path": "events-x-ai-grok-4.1-fast.json",
+      "model": "x-ai/grok-4.1-fast"
+    },
+    {
+      "name": "Mistral Small 4",
+      "events_path": "events-mistralai-mistral-small-2603.json",
+      "model": "mistralai/mistral-small-2603"
     }
   ],
-  "answers_per_model": 4,
-  "default_model": "gemma3:1b"
+  "answers_per_model": 2,
+  "default_model": "openai/gpt-5.4-nano"
 }

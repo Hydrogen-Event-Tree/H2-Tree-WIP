@@ -1317,6 +1317,15 @@
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
+    .reasoning-note {
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      background: color-mix(in srgb, var(--accent) 9%, transparent);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text);
+    }
     .reasoning-box pre {
       margin: 0;
       padding: 0;
@@ -1339,12 +1348,20 @@
       z-index: 25;
       display: none;
       min-width: 220px;
-      max-width: 320px;
+      max-width: min(320px, calc(100vw - 24px));
       padding: 8px;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: var(--card);
       box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+    }
+    .hover-detail-popup.align-right {
+      left: auto;
+      right: 0;
+    }
+    .hover-detail-popup.open-up {
+      top: auto;
+      bottom: calc(100% + 8px);
     }
     .hover-detail:hover .hover-detail-popup,
     .hover-detail:focus-within .hover-detail-popup {
@@ -1988,6 +2005,7 @@
         model: record.model,
         model_name: record.model_name,
         reasoning: ensureArray(record.reasoning)[realizationIndex] || "",
+        reasoning_is_shortened: Boolean(ensureArray(record.reasoning_is_shortened)[realizationIndex]),
       };
       SCORE_FIELDS.forEach((key) => {
         projected[key] = ensureArray(record[key])[realizationIndex];
@@ -2115,6 +2133,7 @@
         model: USER_MODEL_ID,
         model_name: USER_MODEL_NAME,
         reasoning: [""],
+        reasoning_is_shortened: [false],
       };
       SCORE_FIELDS.forEach((key) => {
         record[key] = [normalizeStoredUserScore(answers[key])];
@@ -2451,6 +2470,44 @@
       `;
     }
 
+    function positionHoverDetailPopup(container) {
+      if (!(container instanceof HTMLElement)) return;
+      const popup = container.querySelector(".hover-detail-popup");
+      if (!(popup instanceof HTMLElement)) return;
+
+      popup.classList.remove("align-right", "open-up");
+      popup.style.transform = "";
+      const rect = popup.getBoundingClientRect();
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+      if (rect.right > viewportWidth - 8) {
+        popup.classList.add("align-right");
+      }
+      if (rect.bottom > viewportHeight - 8) {
+        popup.classList.add("open-up");
+      }
+
+      const adjustedRect = popup.getBoundingClientRect();
+      let offsetX = 0;
+      let offsetY = 0;
+      if (adjustedRect.right > viewportWidth - 8) {
+        offsetX -= adjustedRect.right - (viewportWidth - 8);
+      }
+      if (adjustedRect.left < 8) {
+        offsetX += 8 - adjustedRect.left;
+      }
+      if (adjustedRect.bottom > viewportHeight - 8) {
+        offsetY -= adjustedRect.bottom - (viewportHeight - 8);
+      }
+      if (adjustedRect.top < 8) {
+        offsetY += 8 - adjustedRect.top;
+      }
+      if (offsetX || offsetY) {
+        popup.style.transform = `translate(${Math.round(offsetX)}px, ${Math.round(offsetY)}px)`;
+      }
+    }
+
     function renderModelButtonGroup() {
       if (!availableModels.length) return "";
       return `
@@ -2543,9 +2600,18 @@
       const clampedIndex = Math.min(activeRealizationIndex, realizationCount - 1);
       activeRealizationIndex = clampedIndex;
       const reasoning = reasoningEntries[clampedIndex] || "No reasoning trace captured.";
+      const reasoningIsShortened = Boolean(ensureArray(record.reasoning_is_shortened)[clampedIndex]);
+      const shortenedNote = reasoningIsShortened
+        ? `
+          <div class="reasoning-note">
+            This is a shortened reasoning summary from a closed model, not the full internal chain of thought.
+          </div>
+        `
+        : "";
       const content = `
         <div class="reasoning-entry">
           <div class="reasoning-entry-label">Run #${clampedIndex + 1}</div>
+          ${shortenedNote}
           <pre>${escapeHtml(reasoning)}</pre>
         </div>
       `;
@@ -4273,6 +4339,23 @@
       const compareButton = document.getElementById("compareModelsButton");
       const compareClose = document.getElementById("compareClose");
       const compareOverlay = document.querySelector(".compare-modal-overlay");
+
+      document.addEventListener("mouseover", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const container = target.closest(".hover-detail");
+        if (!(container instanceof HTMLElement)) return;
+        const related = event.relatedTarget;
+        if (related instanceof Node && container.contains(related)) return;
+        requestAnimationFrame(() => positionHoverDetailPopup(container));
+      });
+      document.addEventListener("focusin", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const container = target.closest(".hover-detail");
+        if (!(container instanceof HTMLElement)) return;
+        requestAnimationFrame(() => positionHoverDetailPopup(container));
+      });
       if (editModeButton) {
         editModeButton.addEventListener("click", () => {
           setEditMode(!editModeEnabled);
