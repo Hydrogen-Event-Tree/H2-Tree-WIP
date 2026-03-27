@@ -19,6 +19,16 @@
       "name": "Mistral Small 4",
       "events_path": "events-mistralai-mistral-small-2603.json",
       "model": "mistralai/mistral-small-2603"
+    },
+      {
+      "name": "gpt-oss-20b",
+      "events_path": "events-gpt-oss-20b.json",
+      "model": "gpt-oss-20b"
+    },
+      {
+      "name": "Qwen3 14B",
+      "events_path": "events-qwen3-14b.json",
+      "model": "qwen3-14B"
     }
   ],
   "answers_per_model": 2,

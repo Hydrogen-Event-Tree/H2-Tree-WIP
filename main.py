@@ -580,7 +580,7 @@ def _model_slug(model: str) -> str:
 
 
 if __name__ == "__main__":
-    gen = 1
+    gen = 0
     port = 4000
 
     if gen:

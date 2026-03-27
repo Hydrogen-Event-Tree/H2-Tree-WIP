@@ -75,6 +75,107 @@
       align-items: center;
       gap: 10px;
     }
+    .actions-menu {
+      position: relative;
+    }
+    .actions-menu-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+    }
+    .actions-menu-toggle:hover,
+    .actions-menu.open .actions-menu-toggle {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--active-bg);
+    }
+    .menu-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .menu-dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+    .actions-menu-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 220px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--card);
+      box-shadow: 0 16px 32px rgba(15, 23, 42, 0.18);
+      display: grid;
+      gap: 4px;
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity 0.15s ease, transform 0.15s ease;
+      z-index: 35;
+    }
+    .actions-menu.open .actions-menu-dropdown {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .actions-menu-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      padding: 10px 12px;
+      text-align: left;
+      cursor: pointer;
+      font-family: var(--title-font);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .actions-menu-item:hover {
+      background: var(--metric-bg);
+      color: var(--accent);
+    }
+    .actions-menu-item.active {
+      background: var(--active-bg);
+      color: var(--accent);
+    }
+    .actions-menu-item:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .actions-menu-meta {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .actions-menu-item.active .actions-menu-meta {
+      color: inherit;
+    }
+    .actions-menu-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 2px 4px;
+    }
     .desktop-edit-control {
       display: inline-flex;
       align-items: center;
@@ -1154,7 +1255,7 @@
       font-family: var(--title-font);
     }
     .about-modal,
-    .compare-modal {
+    .distance-modal {
       position: fixed;
       inset: 0;
       display: flex;
@@ -1167,17 +1268,17 @@
       transition: visibility 0s linear 0.2s;
     }
     body[data-about-open="true"] .about-modal,
-    body[data-compare-open="true"] .compare-modal {
+    body[data-distance-open="true"] .distance-modal {
       pointer-events: auto;
       visibility: visible;
       transition-delay: 0s;
     }
     body[data-about-open="true"],
-    body[data-compare-open="true"] {
+    body[data-distance-open="true"] {
       overflow: hidden;
     }
     .about-modal-overlay,
-    .compare-modal-overlay {
+    .distance-modal-overlay {
       position: absolute;
       inset: 0;
       background: rgba(15, 23, 42, 0);
@@ -1186,13 +1287,13 @@
       transition: background 0.2s ease, backdrop-filter 0.2s ease, opacity 0.2s ease;
     }
     body[data-about-open="true"] .about-modal-overlay,
-    body[data-compare-open="true"] .compare-modal-overlay {
+    body[data-distance-open="true"] .distance-modal-overlay {
       background: rgba(15, 23, 42, 0.38);
       backdrop-filter: blur(4px);
       opacity: 1;
     }
     .about-modal-card,
-    .compare-modal-card {
+    .distance-modal-card {
       position: relative;
       width: min(640px, 92vw);
       background: var(--card);
@@ -1205,16 +1306,16 @@
       transform: translateY(10px) scale(0.98);
       transition: opacity 0.2s ease, transform 0.2s ease;
     }
-    .compare-modal-card {
-      width: min(760px, 94vw);
+    .distance-modal-card {
+      width: min(980px, 96vw);
     }
     body[data-about-open="true"] .about-modal-card,
-    body[data-compare-open="true"] .compare-modal-card {
+    body[data-distance-open="true"] .distance-modal-card {
       opacity: 1;
       transform: translateY(0) scale(1);
     }
     .about-modal-header,
-    .compare-modal-header {
+    .distance-modal-header {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
@@ -1222,7 +1323,7 @@
       margin-bottom: 10px;
     }
     .about-title,
-    .compare-title {
+    .distance-title {
       margin: 0;
       font-size: 20px;
       display: flex;
@@ -1233,18 +1334,18 @@
       color: var(--accent);
     }
     .about-title .title-accent,
-    .compare-title .title-accent {
+    .distance-title .title-accent {
       color: var(--accent);
       font-weight: 600;
     }
     .about-title .brand sub,
-    .compare-title .brand sub {
+    .distance-title .brand sub {
       font-size: 0.6em;
       line-height: 0;
       vertical-align: sub;
     }
     .about-close,
-    .compare-close {
+    .distance-close {
       border: 1px solid var(--border);
       background: var(--card);
       color: var(--muted);
@@ -1256,23 +1357,23 @@
       transition: border-color 0.15s ease, color 0.15s ease;
     }
     .about-close:hover,
-    .compare-close:hover {
+    .distance-close:hover {
       border-color: var(--accent);
       color: var(--accent);
     }
     .about-body,
-    .compare-body {
+    .distance-body {
       font-size: 13px;
       line-height: 1.6;
       color: var(--text);
       font-family: var(--title-font);
     }
     .about-body p,
-    .compare-body p {
+    .distance-body p {
       margin: 0 0 12px;
     }
     .about-body p:last-child,
-    .compare-body p:last-child {
+    .distance-body p:last-child {
       margin-bottom: 0;
     }
     .model-button-group {
@@ -1380,42 +1481,210 @@
       color: var(--accent);
       font-weight: 700;
     }
-    .compare-summary {
+    .distance-summary {
       color: var(--muted);
       margin-bottom: 12px;
     }
-    .compare-table-wrap {
+    .distance-scale {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .distance-scale-bar {
+      flex: 1 1 auto;
+      height: 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: linear-gradient(90deg, #dcfce7 0%, #fef3c7 50%, #fecaca 100%);
+    }
+    .distance-matrix-wrap {
       border: 1px solid var(--border);
       border-radius: 10px;
       overflow: hidden;
       background: var(--card);
+      overflow-x: auto;
     }
-    .compare-table {
+    .distance-matrix {
       margin-top: 0;
+      min-width: 560px;
     }
-    .compare-table th {
+    .distance-matrix th,
+    .distance-matrix td {
+      text-align: center;
+      vertical-align: middle;
+    }
+    .distance-matrix thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--table-head-bg);
+    }
+    .distance-matrix th:first-child,
+    .distance-matrix tbody th {
+      position: sticky;
+      left: 0;
+      z-index: 1;
       text-align: left;
-    }
-    .compare-table td:last-child,
-    .compare-table th:last-child {
-      text-align: right;
+      background: var(--table-head-bg);
       white-space: nowrap;
     }
-    .compare-empty {
+    .distance-matrix thead th:first-child {
+      z-index: 2;
+    }
+    .distance-cell {
+      min-width: 92px;
+      font-weight: 700;
+    }
+    .distance-cell-diagonal {
+      background: var(--metric-bg);
+      color: var(--muted);
+    }
+    .distance-cell-empty {
+      background: color-mix(in srgb, var(--muted) 10%, white);
+      color: var(--muted);
+    }
+    .distance-cell-value {
+      white-space: nowrap;
+    }
+    .distance-empty {
       padding: 14px 16px;
       color: var(--muted);
     }
+    .distance-truth-section {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }
+    .distance-section-title {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .distance-section-copy {
+      margin: 0 0 12px;
+      color: var(--muted);
+    }
+    .distance-truth-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .distance-truth-button {
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-family: var(--title-font);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+    }
+    .distance-truth-button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .distance-truth-button.active {
+      border-color: var(--accent);
+      background: var(--active-bg);
+      color: var(--accent);
+    }
+    .distance-chart {
+      display: grid;
+      gap: 10px;
+    }
+    .distance-bar-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 68px;
+      align-items: center;
+      gap: 12px;
+    }
+    .distance-bar-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.35;
+    }
+    .distance-bar-track {
+      position: relative;
+      height: 36px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.6), rgba(255,255,255,0)),
+        linear-gradient(90deg, rgba(15, 143, 155, 0.05), rgba(185, 28, 28, 0.05));
+      overflow: hidden;
+    }
+    .distance-bar-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      border-radius: 11px;
+      min-width: 0;
+    }
+    .distance-bar-fill.is-reference {
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, white), color-mix(in srgb, var(--accent) 34%, white));
+    }
+    .distance-bar-meta {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      height: 100%;
+      padding: 0 12px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .distance-bar-rank {
+      color: var(--muted);
+    }
+    .distance-bar-value {
+      text-align: right;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .distance-bar-row.is-reference .distance-bar-label,
+    .distance-bar-row.is-reference .distance-bar-value {
+      color: var(--accent);
+    }
+    @media (max-width: 700px) {
+      .distance-bar-row {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+      .distance-bar-value {
+        text-align: left;
+      }
+    }
     @media (max-width: 550px) {
       .about-modal-card,
-      .compare-modal-card {
+      .distance-modal-card {
         padding: 16px;
       }
       .about-title,
-      .compare-title {
+      .distance-title {
         font-size: 18px;
       }
       .about-body,
-      .compare-body {
+      .distance-body {
         font-size: 14px;
       }
     }
@@ -1436,13 +1705,27 @@
     </div>
     <div class="controls">
       <div class="edit-status edit-mode-inline desktop-edit-control" id="editStatus" aria-live="polite"></div>
-      <button class="about-button export-button edit-mode-inline desktop-edit-control" id="exportAnswersButton" type="button">
-        Export answers
-      </button>
-      <button class="about-button desktop-edit-control" id="editModeButton" type="button" aria-pressed="false">
-        Edit mode
-      </button>
-      <button class="about-button" id="aboutButton" type="button">About</button>
+      <div class="actions-menu" id="actionsMenu">
+        <button class="actions-menu-toggle" id="actionsMenuButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Open menu">
+          <span class="menu-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+        </button>
+        <div class="actions-menu-dropdown" id="actionsMenuDropdown" role="menu" aria-labelledby="actionsMenuButton">
+          <button class="actions-menu-item" id="menuAboutButton" type="button" role="menuitem">
+            <span>About</span>
+          </button>
+          <button class="actions-menu-item" id="menuDistanceButton" type="button" role="menuitem">
+            <span>Model distance</span>
+          </button>
+          <div class="actions-menu-divider" role="separator"></div>
+          <button class="actions-menu-item" id="menuEditModeButton" type="button" role="menuitem" aria-pressed="false">
+            <span>Edit mode</span>
+            <span class="actions-menu-meta" id="menuEditModeMeta">Off</span>
+          </button>
+          <button class="actions-menu-item" id="menuExportAnswersButton" type="button" role="menuitem" hidden>
+            <span>Export answers</span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
   <div class="layout">
@@ -1552,10 +1835,6 @@
                 </label>
               </div>
             </div>
-            <div class="control-block">
-              <div class="control-label">Model comparison</div>
-              <button class="text-link-button" id="compareModelsButton" type="button">Compare models</button>
-            </div>
             <div class="controls-disclaimer">
               Probabilities reflect HIAD responses, not real-world frequencies. Under-reporting or data gaps may make some accident types appear rarer/more frequent here than they are in reality.
             </div>
@@ -1599,33 +1878,41 @@
       </div>
     </div>
   </div>
-  <div id="compareModal" class="compare-modal" aria-hidden="true">
-    <div class="compare-modal-overlay" data-close="compare"></div>
-    <div class="compare-modal-card" role="dialog" aria-modal="true" aria-labelledby="compareTitle">
-      <div class="compare-modal-header">
-        <h2 class="compare-title" id="compareTitle">
-          <span class="title-accent">Compare</span>
-          <span class="brand">Models</span>
+  <div id="distanceModal" class="distance-modal" aria-hidden="true">
+    <div class="distance-modal-overlay" data-close="distance"></div>
+    <div class="distance-modal-card" role="dialog" aria-modal="true" aria-labelledby="distanceTitle">
+      <div class="distance-modal-header">
+        <h2 class="distance-title" id="distanceTitle">
+          <span class="title-accent">Model</span>
+          <span class="brand">Distance</span>
         </h2>
-        <button class="compare-close" id="compareClose" type="button" aria-label="Close">X</button>
+        <button class="distance-close" id="distanceClose" type="button" aria-label="Close">X</button>
       </div>
-      <div class="compare-body">
-        <p class="compare-summary" id="compareSummary">Loading model comparison…</p>
-        <div class="compare-table-wrap">
-          <table class="compare-table">
-            <thead>
+      <div class="distance-body">
+        <p class="distance-summary" id="distanceSummary">Loading model distance…</p>
+        <div class="distance-scale" aria-hidden="true">
+          <span>Low distance</span>
+          <div class="distance-scale-bar"></div>
+          <span>High distance</span>
+        </div>
+        <div class="distance-matrix-wrap">
+          <table class="distance-matrix">
+            <thead id="distanceMatrixHead"></thead>
+            <tbody id="distanceMatrixBody">
               <tr>
-                <th colspan="2">Model pair</th>
-                <th>Discrepancy (%pt.)</th>
-              </tr>
-            </thead>
-            <tbody id="compareTableBody">
-              <tr>
-                <td colspan="3" class="compare-empty">Loading model comparison…</td>
+                <td class="distance-empty">Loading model distance…</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <section class="distance-truth-section" aria-labelledby="distanceTruthTitle">
+          <h3 class="distance-section-title" id="distanceTruthTitle">Distance to</h3>
+          <p class="distance-section-copy">Choose a reference model and view all model distances to it as a performance chart.</p>
+          <div class="distance-truth-buttons" id="distanceTruthButtons"></div>
+          <div class="distance-chart" id="distanceTruthChart">
+            <div class="distance-empty">Select a reference model to show distances.</div>
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -1679,8 +1966,8 @@
     let includeBarrierImmediate = false;
     let includeBarrierDelayed = false;
     let activeTreeFilter = null;
+    let selectedDistanceTruthModelId = null;
     const modelEventsCache = new Map();
-    let compareRequestToken = 0;
     let editModeEnabled = false;
     let userAnswersByEventId = new Map();
 
@@ -3124,7 +3411,7 @@
         });
     }
 
-    async function loadModelEventsForComparison(model) {
+    async function loadModelEvents(model) {
       if (!model || !model.events_path) return [];
       if (modelEventsCache.has(model.events_path)) {
         return modelEventsCache.get(model.events_path);
@@ -3139,83 +3426,203 @@
       return payload;
     }
 
-    function renderModelComparisonRows(rows) {
-      const tableBody = document.getElementById("compareTableBody");
-      if (!tableBody) return;
-      if (!rows.length) {
-        tableBody.innerHTML = '<tr><td colspan="3" class="compare-empty">No comparable model pairs available.</td></tr>';
-        return;
+    function computeModelAnswerDistanceStats(leftRecord, rightRecord) {
+      const realizationCount = Math.max(getRealizationCount(leftRecord), getRealizationCount(rightRecord));
+      let sum = 0;
+      let count = 0;
+      for (let realizationIndex = 0; realizationIndex < realizationCount; realizationIndex += 1) {
+        SCORE_FIELDS.forEach((key) => {
+          const leftScore = normalizeScore(ensureArray(leftRecord?.[key])[realizationIndex]);
+          const rightScore = normalizeScore(ensureArray(rightRecord?.[key])[realizationIndex]);
+          if (leftScore === null || rightScore === null) return;
+          sum += Math.abs(leftScore - rightScore);
+          count += 1;
+        });
       }
-      tableBody.innerHTML = rows.map((row) => `
-        <tr>
-          <td>${escapeHtml(row.left)}</td>
-          <td>${escapeHtml(row.right)}</td>
-          <td>${row.discrepancy === null ? "&mdash;" : escapeHtml(row.discrepancy.toFixed(1))}</td>
-        </tr>
-      `).join("");
+      return { sum, count };
     }
 
-    async function refreshModelComparison() {
-      const summary = document.getElementById("compareSummary");
-      const tableBody = document.getElementById("compareTableBody");
-      if (!summary || !tableBody) return;
-      if (availableModels.length < 2) {
-        summary.textContent = "Add at least two model datasets to compare them.";
-        tableBody.innerHTML = '<tr><td colspan="3" class="compare-empty">At least two models are required.</td></tr>';
+    function computeModelDistanceMatrix() {
+      const models = availableModels.map((model) => ({
+        id: model.id,
+        name: model.name || model.id,
+      }));
+      const pairStats = models.map(() => models.map(() => ({ sum: 0, count: 0 })));
+
+      eventsData.forEach((ev) => {
+        const recordsByModelId = isAggregatedEvent(ev) ? (ev.recordsByModelId || {}) : {};
+        for (let rowIndex = 0; rowIndex < models.length; rowIndex += 1) {
+          for (let colIndex = rowIndex + 1; colIndex < models.length; colIndex += 1) {
+            const leftRecord = recordsByModelId[models[rowIndex].id];
+            const rightRecord = recordsByModelId[models[colIndex].id];
+            const stats = computeModelAnswerDistanceStats(leftRecord, rightRecord);
+            if (!stats.count) continue;
+            pairStats[rowIndex][colIndex].sum += stats.sum;
+            pairStats[rowIndex][colIndex].count += stats.count;
+            pairStats[colIndex][rowIndex].sum += stats.sum;
+            pairStats[colIndex][rowIndex].count += stats.count;
+          }
+        }
+      });
+
+      const matrix = models.map((_, rowIndex) =>
+        models.map((__, colIndex) => {
+          if (rowIndex === colIndex) return 0;
+          const stats = pairStats[rowIndex][colIndex];
+          if (!stats.count) return null;
+          return (stats.sum / stats.count) * 10;
+        })
+      );
+
+      return { models, matrix };
+    }
+
+    function getDistanceCellBackground(value) {
+      if (!Number.isFinite(value)) return "";
+      const ratio = Math.max(0, Math.min(1, value / 100));
+      const hue = 145 - (145 * ratio);
+      const lightness = 93 - (24 * ratio);
+      return `hsl(${hue} 78% ${lightness}%)`;
+    }
+
+    function ensureSelectedDistanceTruthModelId(models) {
+      if (!Array.isArray(models) || !models.length) {
+        selectedDistanceTruthModelId = null;
+        return null;
+      }
+      if (models.some((model) => model.id === selectedDistanceTruthModelId)) {
+        return selectedDistanceTruthModelId;
+      }
+      const preferredId = activeModelId && models.some((model) => model.id === activeModelId)
+        ? activeModelId
+        : models[0].id;
+      selectedDistanceTruthModelId = preferredId;
+      return preferredId;
+    }
+
+    function renderDistanceTruthSection(models, matrix) {
+      const buttons = document.getElementById("distanceTruthButtons");
+      const chart = document.getElementById("distanceTruthChart");
+      if (!buttons || !chart) return;
+
+      if (!Array.isArray(models) || models.length < 2) {
+        buttons.innerHTML = "";
+        chart.innerHTML = '<div class="distance-empty">At least two models are required.</div>';
         return;
       }
 
-      const requestToken = ++compareRequestToken;
-      summary.textContent = "Loading model comparison…";
-      tableBody.innerHTML = '<tr><td colspan="3" class="compare-empty">Loading model comparison…</td></tr>';
-
-      try {
-        const modelData = await Promise.all(
-          availableModels.map(async (model) => {
-            const events = await loadModelEventsForComparison(model);
-            const treeEvents = getTreeEventsFromData(events);
-            const probabilities = computeTreeDecisionProbabilities(treeEvents, TREE_DEFINITION, {
-              useWeights: useScoreWeights,
-            });
-            return {
-              model,
-              probabilityMap: new Map(probabilities.map((entry) => [entry.id, entry.probability])),
-            };
-          })
-        );
-        if (requestToken !== compareRequestToken) return;
-
-        const probabilityIds = TREE_DECISIONS.filter((node) => node.parent).map((node) => node.id);
-        const rows = [];
-        for (let i = 0; i < modelData.length; i++) {
-          for (let j = i + 1; j < modelData.length; j++) {
-            const left = modelData[i];
-            const right = modelData[j];
-            let discrepancySum = 0;
-            let discrepancyCount = 0;
-            probabilityIds.forEach((id) => {
-              const leftValue = left.probabilityMap.get(id);
-              const rightValue = right.probabilityMap.get(id);
-              if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return;
-              discrepancySum += Math.abs(leftValue - rightValue) * 100;
-              discrepancyCount += 1;
-            });
-            rows.push({
-              left: left.model.name || left.model.id,
-              right: right.model.name || right.model.id,
-              discrepancy: discrepancyCount ? discrepancySum / discrepancyCount : null,
-            });
-          }
-        }
-
-        summary.textContent = `Average absolute difference across ${probabilityIds.length} displayed branch probabilities. Filters and score weighting match the current tree.`;
-        renderModelComparisonRows(rows);
-      } catch (err) {
-        console.error(err);
-        if (requestToken !== compareRequestToken) return;
-        summary.textContent = "Unable to compare the currently available model datasets.";
-        tableBody.innerHTML = '<tr><td colspan="3" class="compare-empty">Unable to load one or more model datasets.</td></tr>';
+      const truthModelId = ensureSelectedDistanceTruthModelId(models);
+      const truthIndex = models.findIndex((model) => model.id === truthModelId);
+      if (truthIndex < 0) {
+        buttons.innerHTML = "";
+        chart.innerHTML = '<div class="distance-empty">Reference model unavailable.</div>';
+        return;
       }
+
+      buttons.innerHTML = models.map((model) => `
+        <button
+          class="distance-truth-button${model.id === truthModelId ? " active" : ""}"
+          type="button"
+          data-distance-truth-model-id="${escapeHtml(model.id)}"
+        >
+          ${escapeHtml(model.name)}
+        </button>
+      `).join("");
+
+      const rows = models.map((model, modelIndex) => ({
+        id: model.id,
+        name: model.name,
+        distance: matrix[truthIndex]?.[modelIndex] ?? null,
+        isReference: model.id === truthModelId,
+      })).sort((left, right) => {
+        const leftValue = left.distance;
+        const rightValue = right.distance;
+        if (left.isReference) return -1;
+        if (right.isReference) return 1;
+        if (leftValue === null && rightValue === null) return left.name.localeCompare(right.name);
+        if (leftValue === null) return 1;
+        if (rightValue === null) return -1;
+        if (leftValue !== rightValue) return leftValue - rightValue;
+        return left.name.localeCompare(right.name);
+      });
+
+      chart.innerHTML = rows.map((row, index) => {
+        const width = row.distance === null ? 0 : Math.max(0, Math.min(100, row.distance));
+        const fillStyle = row.isReference
+          ? ""
+          : ` style="width:${width}%; background:${escapeHtml(`linear-gradient(90deg, ${getDistanceCellBackground(Math.max(0, width * 0.4))}, ${getDistanceCellBackground(width)})`)}"`;
+        return `
+          <div class="distance-bar-row${row.isReference ? " is-reference" : ""}">
+            <div class="distance-bar-label">${escapeHtml(row.name)}</div>
+            <div class="distance-bar-track">
+              <div class="distance-bar-fill${row.isReference ? " is-reference" : ""}"${row.isReference ? ' style="width:100%"' : fillStyle}></div>
+              <div class="distance-bar-meta">
+                <span class="distance-bar-rank">${row.isReference ? "Reference" : `#${index}`}</span>
+                <span>${row.isReference ? "Truth" : "Distance"}</span>
+              </div>
+            </div>
+            <div class="distance-bar-value">${row.distance === null ? "—" : `${escapeHtml(row.distance.toFixed(1))}%`}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderModelDistanceMatrix() {
+      const summary = document.getElementById("distanceSummary");
+      const tableHead = document.getElementById("distanceMatrixHead");
+      const tableBody = document.getElementById("distanceMatrixBody");
+      const buttons = document.getElementById("distanceTruthButtons");
+      const chart = document.getElementById("distanceTruthChart");
+      if (!summary || !tableHead || !tableBody) return;
+
+      if (availableModels.length < 2) {
+        summary.textContent = "Add at least two model datasets to compute distances.";
+        tableHead.innerHTML = "";
+        tableBody.innerHTML = '<tr><td class="distance-empty">At least two models are required.</td></tr>';
+        if (buttons) buttons.innerHTML = "";
+        if (chart) chart.innerHTML = '<div class="distance-empty">At least two models are required.</div>';
+        return;
+      }
+      if (!eventsData.length) {
+        summary.textContent = "Model distance will appear once events have loaded.";
+        tableHead.innerHTML = "";
+        tableBody.innerHTML = '<tr><td class="distance-empty">No events are currently available.</td></tr>';
+        if (buttons) buttons.innerHTML = "";
+        if (chart) chart.innerHTML = '<div class="distance-empty">No events are currently available.</div>';
+        return;
+      }
+
+      const { models, matrix } = computeModelDistanceMatrix();
+      tableHead.innerHTML = `
+        <tr>
+          <th>Model</th>
+          ${models.map((model) => `<th>${escapeHtml(model.name)}</th>`).join("")}
+        </tr>
+      `;
+      tableBody.innerHTML = models.map((rowModel, rowIndex) => `
+        <tr>
+          <th scope="row">${escapeHtml(rowModel.name)}</th>
+          ${models.map((_, colIndex) => {
+            const value = matrix[rowIndex][colIndex];
+            const classes = [
+              "distance-cell",
+              rowIndex === colIndex ? "distance-cell-diagonal" : "",
+              value === null ? "distance-cell-empty" : "",
+            ].filter(Boolean).join(" ");
+            const background = rowIndex === colIndex || value === null
+              ? ""
+              : ` style="background:${escapeHtml(getDistanceCellBackground(value))}"`;
+            const label = rowIndex === colIndex
+              ? "0.0%"
+              : value === null
+                ? "&mdash;"
+                : `${escapeHtml(value.toFixed(1))}%`;
+            return `<td class="${classes}"${background}><span class="distance-cell-value">${label}</span></td>`;
+          }).join("")}
+        </tr>
+      `).join("");
+      summary.textContent = `Average absolute answer distance across ${eventsData.length} events, all ${SCORE_FIELDS.length} score fields, and every available realization. Values are shown as percent distance on the original 0-10 answer scale.`;
+      renderDistanceTruthSection(models, matrix);
     }
 
     function buildTreeLayout(events, treeDefinition, { useWeights = false, showDistribution = false } = {}) {
@@ -3879,8 +4286,8 @@
         containerId: "treeContainer",
         statusId: "treeStatus",
       });
-      if (document.body.getAttribute("data-compare-open") === "true") {
-        refreshModelComparison();
+      if (document.body.getAttribute("data-distance-open") === "true") {
+        renderModelDistanceMatrix();
       }
     }
 
@@ -4063,9 +4470,9 @@
     }
 
     function updateModelControls() {
-      const compareButton = document.getElementById("compareModelsButton");
-      if (compareButton) {
-        compareButton.disabled = availableModels.length < 2;
+      const distanceButton = document.getElementById("menuDistanceButton");
+      if (distanceButton) {
+        distanceButton.disabled = availableModels.length < 2;
       }
     }
 
@@ -4094,7 +4501,7 @@
 
     function refreshEditModeStatus() {
       const status = document.getElementById("editStatus");
-      const exportButton = document.getElementById("exportAnswersButton");
+      const exportButton = document.getElementById("menuExportAnswersButton");
       const hasAnswers = buildUserAnswerExportPayload().length > 0;
       if (exportButton) {
         exportButton.disabled = !hasAnswers;
@@ -4113,6 +4520,22 @@
       status.title = `${progress.answeredFields}/${progress.totalFields} scores answered`;
     }
 
+    function refreshActionsMenuUi() {
+      const editButton = document.getElementById("menuEditModeButton");
+      const editMeta = document.getElementById("menuEditModeMeta");
+      const exportButton = document.getElementById("menuExportAnswersButton");
+      if (editButton) {
+        editButton.classList.toggle("active", editModeEnabled);
+        editButton.setAttribute("aria-pressed", editModeEnabled ? "true" : "false");
+      }
+      if (editMeta) {
+        editMeta.textContent = editModeEnabled ? "On" : "Off";
+      }
+      if (exportButton) {
+        exportButton.hidden = !editModeEnabled;
+      }
+    }
+
     function refreshSelectedEventUserAnswerSummary() {
       const summary = document.getElementById("userAnswerSummary");
       const ev = selectedIndex !== null ? eventsData[selectedIndex] : null;
@@ -4128,17 +4551,13 @@
 
     function setEditMode(open) {
       editModeEnabled = !!open;
-      const button = document.getElementById("editModeButton");
-      if (button) {
-        button.classList.toggle("active", editModeEnabled);
-        button.setAttribute("aria-pressed", editModeEnabled ? "true" : "false");
-      }
       if (editModeEnabled) {
         document.body.setAttribute("data-edit-mode", "true");
       } else {
         document.body.removeAttribute("data-edit-mode");
       }
       refreshUserAnswerUi();
+      refreshActionsMenuUi();
     }
 
     function updateStoredUserAnswer(eventId, key, rawValue) {
@@ -4177,7 +4596,7 @@
         const modelPayloads = await Promise.all(
           availableModels.map(async (model) => ({
             model,
-            events: await loadModelEventsForComparison(model),
+            events: await loadModelEvents(model),
           }))
         );
         eventsData = buildAggregatedEvents(modelPayloads);
@@ -4279,9 +4698,10 @@
       const modal = document.getElementById("aboutModal");
       if (!modal) return;
       if (open) {
-        document.body.removeAttribute("data-compare-open");
-        const compareModal = document.getElementById("compareModal");
-        if (compareModal) compareModal.setAttribute("aria-hidden", "true");
+        setActionsMenuOpen(false);
+        document.body.removeAttribute("data-distance-open");
+        const distanceModal = document.getElementById("distanceModal");
+        if (distanceModal) distanceModal.setAttribute("aria-hidden", "true");
         document.body.setAttribute("data-about-open", "true");
         modal.setAttribute("aria-hidden", "false");
       } else {
@@ -4290,20 +4710,29 @@
       }
     }
 
-    function setCompareOpen(open) {
-      const modal = document.getElementById("compareModal");
+    function setDistanceOpen(open) {
+      const modal = document.getElementById("distanceModal");
       if (!modal) return;
       if (open) {
+        setActionsMenuOpen(false);
         document.body.removeAttribute("data-about-open");
         const aboutModal = document.getElementById("aboutModal");
         if (aboutModal) aboutModal.setAttribute("aria-hidden", "true");
-        document.body.setAttribute("data-compare-open", "true");
+        document.body.setAttribute("data-distance-open", "true");
         modal.setAttribute("aria-hidden", "false");
-        refreshModelComparison();
+        renderModelDistanceMatrix();
       } else {
-        document.body.removeAttribute("data-compare-open");
+        document.body.removeAttribute("data-distance-open");
         modal.setAttribute("aria-hidden", "true");
       }
+    }
+
+    function setActionsMenuOpen(open) {
+      const menu = document.getElementById("actionsMenu");
+      const button = document.getElementById("actionsMenuButton");
+      if (!menu || !button) return;
+      menu.classList.toggle("open", !!open);
+      button.setAttribute("aria-expanded", open ? "true" : "false");
     }
 
     async function loadEvents() {
@@ -4331,14 +4760,18 @@
       loadStoredUserAnswers();
       const storedTab = localStorage.getItem("hiad-tab") || "tree";
       setTab(storedTab);
-      const aboutButton = document.getElementById("aboutButton");
+      const actionsMenu = document.getElementById("actionsMenu");
+      const actionsMenuButton = document.getElementById("actionsMenuButton");
+      const aboutButton = document.getElementById("menuAboutButton");
+      const distanceButton = document.getElementById("menuDistanceButton");
       const aboutClose = document.getElementById("aboutClose");
       const aboutOverlay = document.querySelector(".about-modal-overlay");
-      const editModeButton = document.getElementById("editModeButton");
-      const exportAnswersButton = document.getElementById("exportAnswersButton");
-      const compareButton = document.getElementById("compareModelsButton");
-      const compareClose = document.getElementById("compareClose");
-      const compareOverlay = document.querySelector(".compare-modal-overlay");
+      const editModeButton = document.getElementById("menuEditModeButton");
+      const exportAnswersButton = document.getElementById("menuExportAnswersButton");
+      const distanceClose = document.getElementById("distanceClose");
+      const distanceOverlay = document.querySelector(".distance-modal-overlay");
+
+      refreshActionsMenuUi();
 
       document.addEventListener("mouseover", (event) => {
         const target = event.target;
@@ -4356,15 +4789,22 @@
         if (!(container instanceof HTMLElement)) return;
         requestAnimationFrame(() => positionHoverDetailPopup(container));
       });
+      if (actionsMenuButton) {
+        actionsMenuButton.addEventListener("click", () => {
+          setActionsMenuOpen(!actionsMenu?.classList.contains("open"));
+        });
+      }
       if (editModeButton) {
         editModeButton.addEventListener("click", () => {
           setEditMode(!editModeEnabled);
+          setActionsMenuOpen(false);
         });
       }
       if (exportAnswersButton) {
         exportAnswersButton.addEventListener("click", () => {
           if (!exportAnswersButton.disabled) {
             exportUserAnswers();
+            setActionsMenuOpen(false);
           }
         });
       }
@@ -4383,21 +4823,39 @@
           setAboutOpen(false);
         });
       }
-      if (compareButton) {
-        compareButton.addEventListener("click", () => {
-          setCompareOpen(true);
+      if (distanceButton) {
+        distanceButton.addEventListener("click", () => {
+          if (!distanceButton.disabled) {
+            setDistanceOpen(true);
+          }
         });
       }
-      if (compareClose) {
-        compareClose.addEventListener("click", () => {
-          setCompareOpen(false);
+      if (distanceClose) {
+        distanceClose.addEventListener("click", () => {
+          setDistanceOpen(false);
         });
       }
-      if (compareOverlay) {
-        compareOverlay.addEventListener("click", () => {
-          setCompareOpen(false);
+      if (distanceOverlay) {
+        distanceOverlay.addEventListener("click", () => {
+          setDistanceOpen(false);
         });
       }
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest("#actionsMenu")) return;
+        setActionsMenuOpen(false);
+      });
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const button = target.closest("[data-distance-truth-model-id]");
+        if (!button) return;
+        const nextId = button.getAttribute("data-distance-truth-model-id");
+        if (!nextId || nextId === selectedDistanceTruthModelId) return;
+        selectedDistanceTruthModelId = nextId;
+        renderModelDistanceMatrix();
+      });
       document.addEventListener("click", (event) => {
         const button = event.target.closest(".js-model-button");
         if (!button) return;
@@ -4423,12 +4881,16 @@
       });
       document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
-        if (document.body.getAttribute("data-compare-open") === "true") {
-          setCompareOpen(false);
+        if (document.body.getAttribute("data-distance-open") === "true") {
+          setDistanceOpen(false);
           return;
         }
         if (document.body.getAttribute("data-about-open") === "true") {
           setAboutOpen(false);
+          return;
+        }
+        if (actionsMenu?.classList.contains("open")) {
+          setActionsMenuOpen(false);
         }
       });
       const sortSelect = document.getElementById("sortSelect");
