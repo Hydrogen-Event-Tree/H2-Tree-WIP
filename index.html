@@ -1454,6 +1454,7 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       background: var(--card);
+      color: var(--text);
       box-shadow: 0 12px 28px rgba(0,0,0,0.18);
     }
     .hover-detail-popup.align-right {
@@ -1476,6 +1477,14 @@
     .hover-detail-table td {
       padding: 6px 8px;
       white-space: nowrap;
+    }
+    .hover-detail-value.status-included {
+      color: #18794e;
+      font-weight: 700;
+    }
+    .hover-detail-value.status-excluded {
+      color: var(--accent-2);
+      font-weight: 700;
     }
     .about-body a {
       color: var(--accent);
@@ -2665,8 +2674,8 @@
         const title = escapeHtml(ev.title || "Untitled Event");
         const excluded = getAggregateStatus(ev) === "Excluded";
         const statusDot = excluded ? "status-dot excluded" : "status-dot included";
-        const outcome = escapeHtml(getAggregateOutcome(ev) || "Unknown");
-        const answers = '<span class="metric">Outcome: ' + outcome + "</span>";
+        const outcome = excluded ? "" : escapeHtml(getAggregateOutcome(ev) || "Unknown");
+        const answers = outcome ? '<span class="metric">Outcome: ' + outcome + "</span>" : "";
         div.innerHTML = `
           <span class="${statusDot}" aria-label="${excluded ? "Excluded" : "Included"}"></span>
           <div class="event-title">${title}</div>
@@ -2729,13 +2738,21 @@
       refreshList({ ensureSelection: true });
     }
 
-    function renderHoverDetail(displayText, entries, valueLabel, formatter) {
+    function getStatusValueClass(value) {
+      if (value === "Included") return "status-included";
+      if (value === "Excluded") return "status-excluded";
+      return "";
+    }
+
+    function renderHoverDetail(displayText, entries, valueLabel, formatter, options = {}) {
       if (!entries.length) return escapeHtml(displayText);
       const rows = entries.map((entry) => `
         <tr>
           <td>${escapeHtml(entry.modelName || entry.modelId || "Model")}</td>
           <td>${escapeHtml(String(entry.realization))}</td>
-          <td>${escapeHtml(formatter(entry.value))}</td>
+          <td>${options.getValueClassName
+            ? `<span class="hover-detail-value ${options.getValueClassName(entry.value)}">${escapeHtml(formatter(entry.value))}</span>`
+            : escapeHtml(formatter(entry.value))}</td>
         </tr>
       `).join("");
       return `
@@ -2846,6 +2863,7 @@
     }
 
     function renderOutcomePill(ev) {
+      if (getAggregateStatus(ev) === "Excluded") return "";
       const aggregateOutcome = getAggregateOutcome(ev) || "";
       if (!aggregateOutcome) return "";
       const outcomeEntries = getOutcomeEntries(ev);
@@ -2865,7 +2883,8 @@
         aggregateStatus,
         statusEntries,
         "Status",
-        (value) => String(value || "Unknown")
+        (value) => String(value || "Unknown"),
+        { getValueClassName: getStatusValueClass }
       );
       return `<div class="${statusClass}">${statusCell}</div>`;
     }
