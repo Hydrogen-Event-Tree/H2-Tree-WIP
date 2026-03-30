@@ -2814,7 +2814,6 @@
       const realizationCount = Math.max(getRealizationCount(record), 1);
       const clampedIndex = Math.min(activeRealizationIndex, realizationCount - 1);
       activeRealizationIndex = clampedIndex;
-      if (realizationCount <= 1) return "";
       return `
         <div class="model-button-group">
           ${Array.from({ length: realizationCount }, (_, index) => `
@@ -4291,6 +4290,33 @@
       }
     }
 
+    function captureDetailsScrollSnapshot() {
+      const content = document.querySelector(".content");
+      const anchor = document.querySelector("#details .reasoning-box");
+      if (!content) return null;
+      return {
+        scrollTop: content.scrollTop,
+        anchorOffset: anchor
+          ? anchor.getBoundingClientRect().top - content.getBoundingClientRect().top
+          : null,
+      };
+    }
+
+    function restoreDetailsScrollSnapshot(snapshot) {
+      if (!snapshot) return;
+      const content = document.querySelector(".content");
+      if (!content) return;
+      content.scrollTop = snapshot.scrollTop;
+      if (!Number.isFinite(snapshot.anchorOffset)) return;
+      const anchor = document.querySelector("#details .reasoning-box");
+      if (!anchor) return;
+      const nextOffset = anchor.getBoundingClientRect().top - content.getBoundingClientRect().top;
+      const delta = nextOffset - snapshot.anchorOffset;
+      if (Math.abs(delta) >= 1) {
+        content.scrollTop += delta;
+      }
+    }
+
     function selectEvent(idx) {
       const prev = selectedIndex;
       selectedIndex = idx;
@@ -4306,6 +4332,8 @@
       const description = escapeHtml(ev.description || "No description available.");
       const excluded = getAggregateStatus(ev) === "Excluded";
       const statusClass = excluded ? "badge bad" : "badge good";
+      const preserveScroll = prev === idx;
+      const scrollSnapshot = preserveScroll ? captureDetailsScrollSnapshot() : null;
       details.classList.remove("muted", "empty-state");
       details.innerHTML = `
         <button class="all-events-button" type="button">All events</button>
@@ -4356,8 +4384,12 @@
       updateAllEventsButtonCount();
       setListOverlayOpen(false);
       const content = document.querySelector(".content");
-      if (content && prev !== idx) {
-        content.scrollTop = 0;
+      if (content) {
+        if (preserveScroll) {
+          restoreDetailsScrollSnapshot(scrollSnapshot);
+        } else {
+          content.scrollTop = 0;
+        }
       }
       refreshSelectedEventUserAnswerSummary();
     }
