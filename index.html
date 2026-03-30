@@ -1977,6 +1977,8 @@
     let activeTreeFilter = null;
     let selectedDistanceTruthModelId = null;
     const modelEventsCache = new Map();
+    let manifestSharedEvents = [];
+    let manifestSharedEventsById = new Map();
     let editModeEnabled = false;
     let userAnswersByEventId = new Map();
 
@@ -2225,6 +2227,41 @@
       if (Array.isArray(value)) return value;
       if (value === undefined || value === null) return [];
       return [value];
+    }
+
+    function cacheManifestSharedEvents(events) {
+      manifestSharedEvents = Array.isArray(events) ? events : [];
+      manifestSharedEventsById = new Map();
+      manifestSharedEvents.forEach((event, index) => {
+        if (!event || typeof event !== "object") return;
+        const eventId = getEventStorageId(event);
+        if (eventId && !manifestSharedEventsById.has(eventId)) {
+          manifestSharedEventsById.set(eventId, event);
+        }
+      });
+    }
+
+    function getManifestSharedEvent(record, index) {
+      const eventId = getEventStorageId(record);
+      if (eventId && manifestSharedEventsById.has(eventId)) {
+        return manifestSharedEventsById.get(eventId);
+      }
+      return manifestSharedEvents[index] || null;
+    }
+
+    function hydrateModelRecord(record, model, index) {
+      const baseRecord = record && typeof record === "object" ? { ...record } : {};
+      const sharedRecord = getManifestSharedEvent(baseRecord, index);
+      const hydrated = sharedRecord ? { ...sharedRecord, ...baseRecord } : baseRecord;
+      hydrated.event_id = hydrated.event_id ?? sharedRecord?.event_id ?? null;
+      hydrated.model = hydrated.model || model.id;
+      hydrated.model_name = hydrated.model_name || model.name || model.id;
+      hydrated.reasoning = ensureArray(hydrated.reasoning);
+      hydrated.reasoning_is_shortened = ensureArray(hydrated.reasoning_is_shortened);
+      SCORE_FIELDS.forEach((key) => {
+        hydrated[key] = ensureArray(hydrated[key]);
+      });
+      return hydrated;
     }
 
     function isAggregatedEvent(ev) {
@@ -3440,8 +3477,9 @@
       if (!Array.isArray(payload)) {
         throw new Error(`${model.events_path} is not an array`);
       }
-      modelEventsCache.set(model.events_path, payload);
-      return payload;
+      const hydrated = payload.map((record, index) => hydrateModelRecord(record, model, index));
+      modelEventsCache.set(model.events_path, hydrated);
+      return hydrated;
     }
 
     function computeModelAnswerDistanceStats(leftRecord, rightRecord) {
@@ -4792,6 +4830,8 @@
         const response = await fetch("events-manifest.json", { cache: "no-cache" });
         if (!response.ok) throw new Error(`Failed to load manifest: ${response.statusText}`);
         manifestData = await response.json();
+        cacheManifestSharedEvents(manifestData.events);
+        modelEventsCache.clear();
         availableModels = normalizeModels(manifestData.models);
         if (!availableModels.length) throw new Error("No models listed in manifest.");
         const preferredId = resolvePreferredModelId();

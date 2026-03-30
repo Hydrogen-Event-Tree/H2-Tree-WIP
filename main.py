@@ -1,3 +1,4 @@
+import argparse
 import json
 import re
 import time
@@ -7,8 +8,6 @@ from tqdm import tqdm
 import ollama
 
 from openai import OpenAI
-from google import genai
-from google.genai import types
 
 from dashboard import run as run_dashboard
 from parse_hiad import build_event_record, read_enriched_events
@@ -25,7 +24,6 @@ OPENROUTER_REASONING_EFFORT = "high"
 OPENROUTER_TIMEOUT_SECONDS = 40
 OPENROUTER_MAX_ATTEMPTS = 4
 OPENROUTER_RETRY_BACKOFF_SECONDS = 20
-GEMINI_API_KEY = ""
 
 LLMS = [
     {
@@ -87,6 +85,13 @@ RESPONSE_SCHEMA = {
     ],
 }
 ANSWER_FIELDS = tuple(RESPONSE_SCHEMA["properties"].keys())
+SHARED_EVENT_FIELDS = (
+    "event_id",
+    "title",
+    "description",
+    "user_prompt",
+    "system_prompt",
+)
 
 RESPONSE_SCHEMA_JSON = json.dumps(RESPONSE_SCHEMA, ensure_ascii=True, indent=2)
 
@@ -120,66 +125,6 @@ Pure H2 rubric: Score high if the released substance is pure or essentially pure
 Gaseous H2 rubric: Score high if the released hydrogen was gaseous; score low if the release was liquid/solid hydrogen or otherwise not gaseous hydrogen.
 Loss of containment rubric: Score high if any amount of hydrogen actually leaked or was released; score low if no hydrogen release occurred.
 """
-
-
-def _build_genai_response_schema():
-    properties = {}
-    for name, spec in RESPONSE_SCHEMA["properties"].items():
-        schema_type = spec.get("type")
-        if schema_type == "boolean":
-            properties[name] = types.Schema(type=types.Type.BOOLEAN)
-        elif schema_type == "integer":
-            properties[name] = types.Schema(
-                type=types.Type.INTEGER,
-                minimum=spec.get("minimum"),
-                maximum=spec.get("maximum"),
-            )
-        else:
-            raise ValueError(f"Unsupported schema type: {schema_type}")
-    return types.Schema(
-        type=types.Type.OBJECT,
-        properties=properties,
-        required=RESPONSE_SCHEMA.get("required", []),
-    )
-
-
-def _parse_genai_response(response):
-    parsed = getattr(response, "parsed", None)
-    if parsed is not None:
-        if hasattr(parsed, "model_dump"):
-            return (
-                _validate_response_payload(parsed.model_dump(), json.dumps(parsed.model_dump(), ensure_ascii=True)),
-                "",
-                False,
-            )
-        if isinstance(parsed, dict):
-            return _validate_response_payload(parsed, json.dumps(parsed, ensure_ascii=True)), "", False
-        raise ValueError(f"LLM returned unsupported parsed content: {parsed}")
-
-    candidates = getattr(response, "candidates", None) or []
-    parts = []
-    if candidates:
-        content = getattr(candidates[0], "content", None)
-        parts = getattr(content, "parts", None) or []
-
-    text_parts = []
-    reasoning_parts = []
-    for part in parts:
-        text = getattr(part, "text", None)
-        if not text:
-            continue
-        if getattr(part, "thought", False):
-            reasoning_parts.append(text)
-        else:
-            text_parts.append(text)
-
-    text = "".join(text_parts).strip()
-    reasoning = "\n".join(reasoning_parts).strip()
-    if not text:
-        raise ValueError("LLM returned no text content.")
-    parsed = _parse_json_response(text)
-    return parsed, reasoning, False
-
 
 def _serialize_reasoning(value):
     if value is None:
@@ -379,35 +324,6 @@ def _ask_openrouter(prompt: str, system_prompt: str, model_config: dict, seed: i
                 ) from exc
             time.sleep(retry_backoff_seconds * attempt)
 
-
-def _ask_google_ai_studio(prompt: str, system_prompt: str, model: str, seed: int | None = None):
-    if not GEMINI_API_KEY:
-        raise ValueError("Missing GEMINI_API_KEY for Google AI Studio.")
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    config = types.GenerateContentConfig(
-        systemInstruction=system_prompt or None,
-        thinkingConfig=types.ThinkingConfig(thinkingLevel=types.ThinkingLevel.HIGH),
-        responseMimeType="application/json",
-        responseSchema=_build_genai_response_schema(),
-        seed=seed,
-    )
-    contents = [
-        types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=prompt)],
-        )
-    ]
-
-    response = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=config,
-    )
-
-    return _parse_genai_response(response)
-
-
 def ask(prompt: str, system_prompt: str, model_config: dict, seed: int | None = None):
     provider = model_config.get("provider", "ollama")
     model = model_config.get("model")
@@ -415,8 +331,6 @@ def ask(prompt: str, system_prompt: str, model_config: dict, seed: int | None = 
         raise ValueError(f"Invalid model config: {model_config!r}")
     if provider == "openrouter":
         return _ask_openrouter(prompt=prompt, system_prompt=system_prompt, model_config=model_config, seed=seed)
-    if provider == "google-ai-studio":
-        return _ask_google_ai_studio(prompt=prompt, system_prompt=system_prompt, model=model, seed=seed)
     if provider == "ollama":
         return _ask_ollama(
             prompt=prompt,
@@ -425,6 +339,26 @@ def ask(prompt: str, system_prompt: str, model_config: dict, seed: int | None = 
             seed=seed,
         )
     raise ValueError(f"Unsupported provider: {provider}")
+
+
+def build_shared_event_records(file_path: str = FILE_PATH, events_to_include: int = EVENTS_TO_INCLUDE):
+    events = read_enriched_events(file_path, events_to_include)
+    return [
+        build_event_record(row, SYSTEM_PROMPT, RESPONSE_SCHEMA_JSON)
+        for _, row in events.iterrows()
+    ]
+
+
+def _extract_shared_event_record(record: dict):
+    return {field: record.get(field) for field in SHARED_EVENT_FIELDS}
+
+
+def _model_events_path(model_config: dict):
+    explicit_path = model_config.get("events_path")
+    if explicit_path:
+        return explicit_path
+    return f"events-{_model_slug(model_config['model'])}.json"
+
 
 def _run_model_request(record: dict, model_config: dict, realization_index: int):
     result, reasoning, reasoning_is_shortened = ask(
@@ -438,7 +372,7 @@ def _run_model_request(record: dict, model_config: dict, realization_index: int)
 
 def _initialize_event_result(record: dict):
     result = {
-        **record,
+        "event_id": record.get("event_id"),
         "reasoning": ["" for _ in range(ANSWERS_PER_MODEL)],
         "reasoning_is_shortened": [False for _ in range(ANSWERS_PER_MODEL)],
     }
@@ -465,24 +399,21 @@ def _store_failed_realization(event_result: dict, realization_index: int, error:
     event_result["reasoning_is_shortened"][realization_index] = False
 
 
-def process_events(model_config, save_path=None):
-    events = read_enriched_events(FILE_PATH, EVENTS_TO_INCLUDE)
+def process_events(model_config, save_path=None, event_records=None):
+    if event_records is None:
+        event_records = build_shared_event_records()
     results = []
     if not isinstance(model_config, dict) or not model_config.get("model"):
         raise ValueError(f"Invalid model config: {model_config!r}")
 
     model_label = model_config.get("name") or model_config.get("model") or "model"
     provider = model_config.get("provider", "ollama")
-    if provider in ("openrouter", "google-ai-studio"):
-        if provider == "openrouter":
-            max_workers = model_config.get("max_workers") or OPENROUTER_DEFAULT_MAX_WORKERS
-        else:
-            max_workers = model_config.get("max_workers") or DEFAULT_MAX_WORKERS
-        results_by_index = [None] * len(events)
+    if provider == "openrouter":
+        max_workers = model_config.get("max_workers") or OPENROUTER_DEFAULT_MAX_WORKERS
+        results_by_index = [None] * len(event_records)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
-            for idx, (_, row) in enumerate(events.iterrows()):
-                record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
+            for idx, record in enumerate(event_records):
                 results_by_index[idx] = _initialize_event_result(record)
                 for realization_index in range(ANSWERS_PER_MODEL):
                     futures[
@@ -495,7 +426,7 @@ def process_events(model_config, save_path=None):
                     ] = (idx, realization_index)
 
             with tqdm(
-                total=len(events) * ANSWERS_PER_MODEL,
+                total=len(event_records) * ANSWERS_PER_MODEL,
                 desc=f"Processing events ({model_label})",
             ) as progress:
                 for future in as_completed(futures):
@@ -519,11 +450,10 @@ def process_events(model_config, save_path=None):
         results = results_by_index
     else:
         event_progress = tqdm(
-            total=len(events) * ANSWERS_PER_MODEL,
+            total=len(event_records) * ANSWERS_PER_MODEL,
             desc=f"Processing events ({model_label})",
         )
-        for _, row in events.iterrows():
-            record = build_event_record(row, SYSTEM_PROMPT, model_config, RESPONSE_SCHEMA_JSON)
+        for record in event_records:
             event_result = _initialize_event_result(record)
             for realization_index in range(ANSWERS_PER_MODEL):
                 _, result, reasoning, reasoning_is_shortened = _run_model_request(
@@ -557,11 +487,11 @@ def load_events(path = "events.json"):
     return events
 
 
-def save_events_manifest(model_configs, default_model=None, path="events-manifest.json"):
+def save_events_manifest(model_configs, default_model=None, path="events-manifest.json", shared_events=None):
     models = [
         {
             "name": model_config.get("name"),
-            "events_path": f"events-{_model_slug(model_config['model'])}.json",
+            "events_path": _model_events_path(model_config),
             "model": model_config.get("model"),
         }
         for model_config in model_configs
@@ -571,6 +501,8 @@ def save_events_manifest(model_configs, default_model=None, path="events-manifes
         default_model = model_configs[0].get("model")
     if default_model is not None:
         payload["default_model"] = default_model
+    if shared_events is not None:
+        payload["events"] = [_extract_shared_event_record(record) for record in shared_events]
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=True, indent=2)
 
@@ -579,15 +511,29 @@ def _model_slug(model: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in model)
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Generate and serve HIAD event data.")
+    parser.add_argument("--generate", action="store_true", help="Generate model outputs from the HIAD source data.")
+    parser.add_argument("--serve", action="store_true", help="Run the local dashboard server.")
+    parser.add_argument("--port", type=int, default=4000, help="Dashboard server port.")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    gen = 0
-    port = 4000
+    args = _parse_args()
+    should_serve = args.serve or not args.generate
 
-    if gen:
+    if args.generate:
+        shared_event_records = build_shared_event_records()
         for model_config in LLMS:
-            events_path = f"events-{_model_slug(model_config['model'])}.json"
-            process_events(model_config=model_config, save_path=events_path)
+            events_path = _model_events_path(model_config)
+            process_events(
+                model_config=model_config,
+                save_path=events_path,
+                event_records=shared_event_records,
+            )
 
-        save_events_manifest(LLMS)
+        save_events_manifest(LLMS, shared_events=shared_event_records)
 
-    run_dashboard(port=port)
+    if should_serve:
+        run_dashboard(port=args.port)

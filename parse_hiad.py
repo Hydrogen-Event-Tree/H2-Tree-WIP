@@ -256,7 +256,7 @@ def build_event_markdown(row) -> str:
     return "\n".join(sections)
 
 
-def build_event_record(row, system_prompt: str, model_config: dict, response_schema_json: str):
+def build_event_record(row, system_prompt: str, response_schema_json: str):
     markdown = build_event_markdown(row)
     description = clean_value(row.get("Event full description")) or "No description available."
     prompt = f"""Use the HIAD event record below to determine the answers for each question.
@@ -276,7 +276,4 @@ JSON schema:
         "description": description,
         "user_prompt": prompt,
         "system_prompt": system_prompt,
-        "model": model_config["model"],
-        "model_name": model_config.get("name"),
-        "reasoning": "",
     }
