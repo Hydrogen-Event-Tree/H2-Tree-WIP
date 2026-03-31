@@ -3422,7 +3422,7 @@
       const densityInfo = nodeDensityMap[nodeIndex];
       return {
         branch_event_count: Number(values[0]),
-        mean: Number(values[1]),
+        mode: Number(values[1]),
         density_source_index: Array.isArray(densityInfo) ? Number(densityInfo[0]) : null,
         density_reverse: Array.isArray(densityInfo) ? Boolean(densityInfo[1]) : false,
       };
@@ -3538,8 +3538,8 @@
 
     function getPosteriorMode(posterior) {
       if (!posterior) return null;
-      if (Number.isFinite(posterior._mode)) {
-        return posterior._mode;
+      if (Number.isFinite(posterior.mode)) {
+        return posterior.mode;
       }
       const grid = posteriorSummaryData?.meta?.grid || [];
       const density = getPosteriorDensityForEntry(posterior);
@@ -3552,8 +3552,8 @@
           bestIndex = i;
         }
       }
-      posterior._mode = Number(grid[bestIndex]);
-      return posterior._mode;
+      posterior.mode = Number(grid[bestIndex]);
+      return posterior.mode;
     }
 
     function determineBranchKey(childConditions, parentConditions) {
@@ -3727,10 +3727,9 @@
         betaTooltipTitle.textContent = `${label}: ${branch}`;
       }
       if (betaTooltipMeta) {
-        const meanText = Number.isFinite(posterior.mean) ? formatPercent(posterior.mean) : "—";
         const posteriorMode = getPosteriorMode(posterior);
         const modeText = Number.isFinite(posteriorMode) ? formatPercent(posteriorMode) : "—";
-        betaTooltipMeta.textContent = `Mean ${meanText} | Mode ${modeText}`;
+        betaTooltipMeta.textContent = `Mode ${modeText}`;
       }
       if (betaTooltipRange) {
         if (hdi && Number.isFinite(hdi.lower) && Number.isFinite(hdi.upper)) {
@@ -4128,7 +4127,7 @@
         node.weightSum = null;
         node.parentWeightSum = null;
         node.posterior = posterior;
-        node.probability = Number.isFinite(Number(posterior?.mean)) ? Number(posterior.mean) : 0;
+        node.probability = Number.isFinite(Number(posterior?.mode)) ? Number(posterior.mode) : 0;
         if (posterior && Number.isFinite(Number(posterior.branch_event_count))) {
           node.count = Number(posterior.branch_event_count);
         }

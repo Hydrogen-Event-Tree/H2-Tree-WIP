@@ -506,7 +506,7 @@ def branch_title(
 
 
 def serialize_node_summary(branch_event_count: int, stats: dict[str, float]) -> list[float]:
-    return [int(branch_event_count), round_float(stats["mean"], digits=6)]
+    return [int(branch_event_count), round_float(stats["mode"], digits=6)]
 
 
 def init_worker_state(
