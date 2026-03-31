@@ -12,6 +12,7 @@ SCORE_FIELDS = {
     "confined_space",
     "pure_h2",
     "gaseous_h2",
+    "pressurized_h2",
     "loss_of_containment",
 }
 
@@ -51,6 +52,7 @@ def create_event_tree(events, show_exclusion = False, filename = "event_tree.png
     inclusion_flags = [
         "pure_h2",
         "gaseous_h2",
+        "pressurized_h2",
         "loss_of_containment",
     ]
 

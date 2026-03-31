@@ -1765,6 +1765,12 @@
                   </div>
                 </label>
                 <label class="control-option">
+                  <input type="checkbox" id="onlyPressurizedH2" checked />
+                  <div class="control-text">
+                    <div class="control-title" id="labelPressurizedH2">Only pressurized H2</div>
+                  </div>
+                </label>
+                <label class="control-option">
                   <input type="checkbox" id="onlyLossOfContainment" checked />
                   <div class="control-text">
                     <div class="control-title" id="labelLossOfContainment">Only loss of containment</div>
@@ -1940,6 +1946,7 @@
     const INCLUSION_QUESTIONS = [
       ["pure_h2", "Pure H2"],
       ["gaseous_h2", "Gaseous H2"],
+      ["pressurized_h2", "Pressurized H2"],
       ["loss_of_containment", "Loss of containment"],
     ];
     const SCORE_FIELDS = [
@@ -1971,6 +1978,7 @@
     let showDistributionAlways = true;
     let onlyPureH2 = true;
     let onlyGaseousH2 = true;
+    let onlyPressurizedH2 = true;
     let onlyLossOfContainment = true;
     let includeBarrierImmediate = false;
     let includeBarrierDelayed = false;
@@ -2623,6 +2631,7 @@
       return !!(
         !scoreToBool(ev.pure_h2) ||
         !scoreToBool(ev.gaseous_h2) ||
+        !scoreToBool(ev.pressurized_h2) ||
         !scoreToBool(ev.loss_of_containment) ||
         barrierImmediate(ev) ||
         barrierDelayed(ev)
@@ -2632,6 +2641,7 @@
     function shouldIncludeEvent(ev) {
       if (onlyPureH2 && !scoreToBool(ev.pure_h2)) return false;
       if (onlyGaseousH2 && !scoreToBool(ev.gaseous_h2)) return false;
+      if (onlyPressurizedH2 && !scoreToBool(ev.pressurized_h2)) return false;
       if (onlyLossOfContainment && !scoreToBool(ev.loss_of_containment)) return false;
       if (!includeBarrierImmediate && barrierImmediate(ev)) return false;
       if (!includeBarrierDelayed && barrierDelayed(ev)) return false;
@@ -3424,10 +3434,19 @@
       const total = treeEvents.length;
       const notPureH2 = treeEvents.filter((ev) => !scoreToBool(ev.pure_h2)).length;
       const notGaseousH2 = treeEvents.filter((ev) => !scoreToBool(ev.gaseous_h2)).length;
+      const notPressurizedH2 = treeEvents.filter((ev) => !scoreToBool(ev.pressurized_h2)).length;
       const noLoc = treeEvents.filter((ev) => !scoreToBool(ev.loss_of_containment)).length;
       const barrierImmediateCount = treeEvents.filter((ev) => barrierImmediate(ev)).length;
       const barrierDelayedCount = treeEvents.filter((ev) => barrierDelayed(ev)).length;
-      return { total, notPureH2, notGaseousH2, noLoc, barrierImmediateCount, barrierDelayedCount };
+      return {
+        total,
+        notPureH2,
+        notGaseousH2,
+        notPressurizedH2,
+        noLoc,
+        barrierImmediateCount,
+        barrierDelayedCount,
+      };
     }
 
     function describeTreeSample(eventsForTree) {
@@ -4317,11 +4336,13 @@
       const counts = computeEventCounts();
       const notPureLabel = document.getElementById("labelPureH2");
       const notGaseousLabel = document.getElementById("labelGaseousH2");
+      const notPressurizedLabel = document.getElementById("labelPressurizedH2");
       const noLocLabel = document.getElementById("labelLossOfContainment");
       const barrierImmediateLabel = document.getElementById("labelBarrierImmediate");
       const barrierDelayedLabel = document.getElementById("labelBarrierDelayed");
       if (notPureLabel) notPureLabel.textContent = `Only pure H2 (${counts.notPureH2})`;
       if (notGaseousLabel) notGaseousLabel.textContent = `Only gaseous H2 (${counts.notGaseousH2})`;
+      if (notPressurizedLabel) notPressurizedLabel.textContent = `Only pressurized H2 (${counts.notPressurizedH2})`;
       if (noLocLabel) noLocLabel.textContent = `Only loss of containment (${counts.noLoc})`;
       if (barrierImmediateLabel) barrierImmediateLabel.textContent = `Include barrier-stopped immediate ignition (${counts.barrierImmediateCount})`;
       if (barrierDelayedLabel) barrierDelayedLabel.textContent = `Include barrier-stopped delayed ignition (${counts.barrierDelayedCount})`;
@@ -4994,6 +5015,7 @@
       }
       const includeNotPure = document.getElementById("onlyPureH2");
       const includeNotGaseous = document.getElementById("onlyGaseousH2");
+      const includeNotPressurized = document.getElementById("onlyPressurizedH2");
       const includeNoLocToggle = document.getElementById("onlyLossOfContainment");
       const includeBarrier1 = document.getElementById("includeBarrierImmediate");
       const includeBarrier2 = document.getElementById("includeBarrierDelayed");
@@ -5010,6 +5032,14 @@
         onlyGaseousH2 = includeNotGaseous.checked;
         includeNotGaseous.addEventListener("change", (e) => {
           onlyGaseousH2 = e.target.checked;
+          updateTree();
+          refreshList({ ensureSelection: true });
+        });
+      }
+      if (includeNotPressurized) {
+        onlyPressurizedH2 = includeNotPressurized.checked;
+        includeNotPressurized.addEventListener("change", (e) => {
+          onlyPressurizedH2 = e.target.checked;
           updateTree();
           refreshList({ ensureSelection: true });
         });

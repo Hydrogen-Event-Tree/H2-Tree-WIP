@@ -70,6 +70,7 @@ RESPONSE_SCHEMA = {
         "confined_space": {"type": "integer", "minimum": 0, "maximum": 10},
         "pure_h2": {"type": "integer", "minimum": 0, "maximum": 10},
         "gaseous_h2": {"type": "integer", "minimum": 0, "maximum": 10},
+        "pressurized_h2": {"type": "integer", "minimum": 0, "maximum": 10},
         "loss_of_containment": {"type": "integer", "minimum": 0, "maximum": 10},
     },
     "required": [
@@ -81,6 +82,7 @@ RESPONSE_SCHEMA = {
         "confined_space",
         "pure_h2",
         "gaseous_h2",
+        "pressurized_h2",
         "loss_of_containment",
     ],
 }
@@ -113,7 +115,7 @@ SYSTEM_PROMPT = """Fill every field in the JSON schema with a single integer fro
 
 Return only raw JSON. Do not wrap it in markdown or code fences.
 
-Schema: {continuous_release:int, immediate_ignition:int, barrier_stopped_immediate_ignition:int, delayed_ignition:int, barrier_stopped_delayed_ignition:int, confined_space:int, pure_h2:int, gaseous_h2:int, loss_of_containment:int}. Use the provided event details to decide.
+Schema: {continuous_release:int, immediate_ignition:int, barrier_stopped_immediate_ignition:int, delayed_ignition:int, barrier_stopped_delayed_ignition:int, confined_space:int, pure_h2:int, gaseous_h2:int, pressurized_h2:int, loss_of_containment:int}. Use the provided event details to decide.
 
 Continuous release rubric: Score high if hydrogen release persisted over time rather than a single brief discharge.
 Immediate ignition rubric: Score high if ignition occurred at the moment of release or within seconds without delay or hydrogen accumulation in the surrounding environment.
@@ -123,6 +125,7 @@ Barrier (delayed) rubric: Score high only when delayed ignition did not occur an
 Confined space rubric: Score high if the release occurred in an enclosed or poorly ventilated area that limits dispersion.
 Pure H2 rubric: Score high if the released substance is pure or essentially pure gaseous hydrogen; score low if it is a hydrogen mixture with significant non-hydrogen components or is not primarily hydrogen.
 Gaseous H2 rubric: Score high if the released hydrogen was gaseous; score low if the release was liquid/solid hydrogen or otherwise not gaseous hydrogen.
+Pressurized H2 rubric: Score high if the released hydrogen was stored, transported, or processed under pressure before or during loss of containment (e.g., cylinders, tube trailers, pressure vessels, pressurized piping, compressors, CGH2 systems). Score low if the hydrogen was not pressurized, pressure is clearly not involved, or the event concerns in-situ generation or near-atmospheric accumulation without a pressurized hydrogen system.
 Loss of containment rubric: Score high if any amount of hydrogen actually leaked or was released; score low if no hydrogen release occurred.
 """
 
