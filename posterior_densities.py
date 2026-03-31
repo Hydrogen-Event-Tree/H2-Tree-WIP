@@ -209,6 +209,18 @@ def option_key(options: dict[str, bool], model_ids: list[str]) -> str:
     return "__".join(parts)
 
 
+def option_names(model_ids: list[str]) -> list[str]:
+    return FILTER_OPTION_NAMES + [model_option_name(model_id) for model_id in model_ids]
+
+
+def option_combo_index(options: dict[str, bool], names: list[str]) -> int:
+    value = 0
+    for bit_index, name in enumerate(names):
+        if options.get(name, False):
+            value |= 1 << bit_index
+    return value
+
+
 def default_options(model_ids: list[str]) -> dict[str, bool]:
     options = dict(DEFAULT_FILTER_OPTIONS)
     for model_id in model_ids:
@@ -222,19 +234,12 @@ def selected_model_ids_from_options(options: dict[str, bool], model_ids: list[st
 
 def iter_filter_options(model_ids: list[str]) -> list[dict[str, bool]]:
     combinations: list[dict[str, bool]] = []
-    option_names = FILTER_OPTION_NAMES + [model_option_name(model_id) for model_id in model_ids]
-    defaults = default_options(model_ids)
-    for bits in range(1 << len(option_names)):
+    names = option_names(model_ids)
+    for bits in range(1 << len(names)):
         options = {}
-        for index, name in enumerate(option_names):
+        for index, name in enumerate(names):
             options[name] = bool((bits >> index) & 1)
         combinations.append(options)
-    combinations.sort(
-        key=lambda options: (
-            option_key(options, model_ids) != option_key(defaults, model_ids),
-            option_key(options, model_ids),
-        )
-    )
     return combinations
 
 
@@ -500,44 +505,8 @@ def branch_title(
     )
 
 
-def serialize_node_summary(
-    spec: BranchSpec,
-    node_id: str,
-    branch_value: bool,
-    parent_event_count: int,
-    branch_event_count: int,
-    model_count: int,
-    answer_count: int,
-    stats: dict[str, float],
-    plot_path: Path | None,
-) -> dict[str, Any]:
-    intervals = {}
-    for level in (50, 68, 95, 99):
-        intervals[str(level)] = {
-            "low": round_float(stats[f"hdi_{level}_low"]),
-            "high": round_float(stats[f"hdi_{level}_high"]),
-        }
-
-    payload = {
-        "node_id": node_id,
-        "slug": spec.slug,
-        "question": spec.question,
-        "branch_value": branch_value,
-        "branch_label": VALUE_LABELS[branch_value],
-        "parent_label": spec.parent_label,
-        "parent_event_count": parent_event_count,
-        "branch_event_count": branch_event_count,
-        "model_count": model_count,
-        "realizations_per_model": answer_count,
-        "mean": round_float(stats["mean"]),
-        "mode": round_float(stats["mode"]),
-        "intervals": intervals,
-        "density_source_id": spec.yes_node_id,
-        "density_reverse": not branch_value,
-    }
-    if plot_path is not None:
-        payload["plot_path"] = str(plot_path)
-    return payload
+def serialize_node_summary(branch_event_count: int, stats: dict[str, float]) -> list[float]:
+    return [int(branch_event_count), round_float(stats["mean"], digits=6)]
 
 
 def init_worker_state(
@@ -550,7 +519,6 @@ def init_worker_state(
     generate_plots: bool,
     plots_dir: str,
     densities_dir: str,
-    output_dir: str,
 ) -> None:
     global WORKER_STATE
     WORKER_STATE = {
@@ -563,11 +531,10 @@ def init_worker_state(
         "generate_plots": generate_plots,
         "plots_dir": Path(plots_dir),
         "densities_dir": Path(densities_dir),
-        "output_dir": Path(output_dir),
     }
 
 
-def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: list[str]) -> tuple[int, str, dict[str, Any]]:
+def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: list[str]) -> tuple[int, list[Any]]:
     events: list[dict[str, Any]] = WORKER_STATE["events"]
     answer_count: int = WORKER_STATE["answer_count"]
     p_grid: np.ndarray = WORKER_STATE["p_grid"]
@@ -577,25 +544,18 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
     generate_plots: bool = WORKER_STATE["generate_plots"]
     plots_dir: Path = WORKER_STATE["plots_dir"]
     densities_dir: Path = WORKER_STATE["densities_dir"]
-    output_dir: Path = WORKER_STATE["output_dir"]
 
-    combo_key = option_key(options, model_ids)
     selected_model_ids = selected_model_ids_from_options(options, model_ids)
     density_file = densities_dir / f"combo_{combo_index:05d}.json"
     included_events = [event for event in events if is_included_event(event, options, selected_model_ids)]
-    combo_entry: dict[str, Any] = {
-        "options": options,
-        "selected_model_ids": selected_model_ids,
-        "root_event_count": len(included_events),
-        "density_file": None,
-        "nodes": {},
-    }
+    node_order = [spec.yes_node_id for spec in BRANCH_SPECS] + [spec.no_node_id for spec in BRANCH_SPECS]
+    node_index_by_id = {node_id: index for index, node_id in enumerate(node_order)}
+    combo_entry: list[Any] = [len(included_events), None]
     if not included_events:
-        return combo_index, combo_key, combo_entry
+        return combo_index, combo_entry
 
-    density_payload: dict[str, Any] = {
-        "nodes": {},
-    }
+    density_payload: list[list[float]] = []
+    combo_nodes: list[list[float] | None] = [None] * len(node_order)
     for branch_index, spec in enumerate(BRANCH_SPECS, start=1):
         parent_events = [
             event
@@ -622,7 +582,7 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
         stats_yes = summarize_density(p_grid, density_yes)
         density_no = density_yes[::-1].copy()
         stats_no = mirror_stats(stats_yes)
-        density_payload["nodes"][spec.yes_node_id] = round_float_list(density_yes)
+        density_payload.append(round_float_list(density_yes))
 
         outputs = [
             (True, spec.yes_node_id, density_yes, stats_yes),
@@ -655,29 +615,19 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
                     stats=stats,
                 )
 
-            combo_entry["nodes"][node_id] = serialize_node_summary(
-                spec=spec,
-                node_id=node_id,
-                branch_value=branch_value,
-                parent_event_count=len(parent_events),
-                branch_event_count=branch_event_count,
-                model_count=len(selected_model_ids),
-                answer_count=answer_count,
-                stats=stats,
-                plot_path=output_path,
-            )
+            combo_nodes[node_index_by_id[node_id]] = serialize_node_summary(branch_event_count=branch_event_count, stats=stats)
 
     with density_file.open("w", encoding="utf-8") as handle:
         json.dump(density_payload, handle, separators=(",", ":"))
         handle.write("\n")
-    combo_entry["density_file"] = str(density_file.relative_to(output_dir.parent))
+    combo_entry[1] = combo_nodes
 
-    return combo_index, combo_key, combo_entry
+    return combo_index, combo_entry
 
 
 def write_summary_json(summary: dict[str, Any], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=2)
+        json.dump(summary, handle, separators=(",", ":"))
         handle.write("\n")
 
 
@@ -733,6 +683,15 @@ def main() -> None:
         for model_id in model_ids
     ]
     default_option_values = default_options(model_ids)
+    all_option_names = option_names(model_ids)
+    node_order = [spec.yes_node_id for spec in BRANCH_SPECS] + [spec.no_node_id for spec in BRANCH_SPECS]
+    yes_node_order = [spec.yes_node_id for spec in BRANCH_SPECS]
+    node_density_map = []
+    yes_index_by_id = {node_id: index for index, node_id in enumerate(yes_node_order)}
+    for spec in BRANCH_SPECS:
+        node_density_map.append([yes_index_by_id[spec.yes_node_id], 0])
+    for spec in BRANCH_SPECS:
+        node_density_map.append([yes_index_by_id[spec.yes_node_id], 1])
     p_grid = np.linspace(1e-4, 1.0 - 1e-4, args.grid_size)
     summary_payload: dict[str, Any] = {
         "meta": {
@@ -743,16 +702,19 @@ def main() -> None:
             "model_count": model_count,
             "realizations_per_model": answer_count,
             "grid": round_float_list(p_grid),
-            "filter_option_names": FILTER_OPTION_NAMES,
+            "option_names": all_option_names,
             "available_models": model_entries,
-            "default_option_key": option_key(default_option_values, model_ids),
+            "default_combo_index": option_combo_index(default_option_values, all_option_names),
+            "node_order": node_order,
+            "yes_node_order": yes_node_order,
+            "node_density_map": node_density_map,
             "generate_plots": bool(args.generate_plots),
         },
-        "combinations": {},
+        "combinations": [],
     }
 
     filter_options_list = iter_filter_options(model_ids)
-    combo_results: dict[int, tuple[str, dict[str, Any]]] = {}
+    combo_results: dict[int, list[Any]] = {}
     workers = max(1, args.workers)
     if workers == 1:
         combo_progress = tqdm(range(len(filter_options_list)), desc="Computing posteriors")
@@ -766,14 +728,14 @@ def main() -> None:
             generate_plots=bool(args.generate_plots),
             plots_dir=str(plots_dir),
             densities_dir=str(densities_dir),
-            output_dir=str(output_dir),
         )
         for combo_index in combo_progress:
-            combo_results[combo_index] = compute_combo_entry(
+            returned_index, combo_entry = compute_combo_entry(
                 combo_index=combo_index,
                 options=filter_options_list[combo_index],
                 model_ids=model_ids,
-            )[1:]
+            )
+            combo_results[returned_index] = combo_entry
     else:
         ctx = multiprocessing.get_context("spawn")
         combo_progress = tqdm(total=len(filter_options_list), desc="Computing posteriors")
@@ -791,7 +753,6 @@ def main() -> None:
                 bool(args.generate_plots),
                 str(plots_dir),
                 str(densities_dir),
-                str(output_dir),
             ),
         ) as executor:
             future_map = {
@@ -799,14 +760,12 @@ def main() -> None:
                 for combo_index, options in enumerate(filter_options_list)
             }
             for future in concurrent.futures.as_completed(future_map):
-                combo_index, combo_key, combo_entry = future.result()
-                combo_results[combo_index] = (combo_key, combo_entry)
+                returned_index, combo_entry = future.result()
+                combo_results[returned_index] = combo_entry
                 combo_progress.update(1)
         combo_progress.close()
 
-    for combo_index in range(len(filter_options_list)):
-        combo_key, combo_entry = combo_results[combo_index]
-        summary_payload["combinations"][combo_key] = combo_entry
+    summary_payload["combinations"] = [combo_results[index] for index in range(len(filter_options_list))]
 
     write_summary_json(summary_payload, output_dir / "posterior_summary.json")
 

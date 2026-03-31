@@ -3375,7 +3375,7 @@
 
     function getActivePosteriorOptionKey() {
       const options = getActivePosteriorOptions();
-      const optionOrder = posteriorSummaryData?.meta?.filter_option_names || POSTERIOR_OPTION_ORDER;
+      const optionOrder = POSTERIOR_OPTION_ORDER;
       const availablePosteriorModels = posteriorSummaryData?.meta?.available_models || [];
       const modelParts = availablePosteriorModels.map((model) => {
         const selected = selectedPosteriorModelIds.includes(model.id);
@@ -3387,34 +3387,111 @@
       ].join("__");
     }
 
+    function getActivePosteriorComboIndex() {
+      const optionNames = posteriorSummaryData?.meta?.option_names || [];
+      if (!optionNames.length) return null;
+      let value = 0;
+      optionNames.forEach((name, bitIndex) => {
+        let enabled = false;
+        if (name.startsWith("model:")) {
+          enabled = selectedPosteriorModelIds.includes(name.slice("model:".length));
+        } else {
+          enabled = !!getActivePosteriorOptions()[name];
+        }
+        if (enabled) {
+          value |= (1 << bitIndex);
+        }
+      });
+      return value;
+    }
+
     function getActivePosteriorCombination() {
-      const key = getActivePosteriorOptionKey();
-      return posteriorSummaryData?.combinations?.[key] || null;
+      const index = getActivePosteriorComboIndex();
+      if (!Number.isInteger(index)) return null;
+      return posteriorSummaryData?.combinations?.[index] || null;
     }
 
     function getPosteriorNodeEntry(nodeId) {
-      return getActivePosteriorCombination()?.nodes?.[nodeId] || null;
+      const combination = getActivePosteriorCombination();
+      const nodeOrder = posteriorSummaryData?.meta?.node_order || [];
+      const nodeDensityMap = posteriorSummaryData?.meta?.node_density_map || [];
+      const nodeIndex = nodeOrder.indexOf(nodeId);
+      if (nodeIndex < 0) return null;
+      const values = combination?.[1]?.[nodeIndex];
+      if (!Array.isArray(values)) return null;
+      const densityInfo = nodeDensityMap[nodeIndex];
+      return {
+        branch_event_count: Number(values[0]),
+        mean: Number(values[1]),
+        density_source_index: Array.isArray(densityInfo) ? Number(densityInfo[0]) : null,
+        density_reverse: Array.isArray(densityInfo) ? Boolean(densityInfo[1]) : false,
+      };
+    }
+
+    function shortestPosteriorInterval(grid, density, mass = 0.95) {
+      if (!Array.isArray(grid) || !Array.isArray(density) || grid.length < 2 || grid.length !== density.length) {
+        return null;
+      }
+      const dx = [];
+      for (let i = 0; i < grid.length - 1; i += 1) {
+        dx.push(Number(grid[i + 1]) - Number(grid[i]));
+      }
+      const midpointMass = dx.map((step, i) => 0.5 * (Number(density[i]) + Number(density[i + 1])) * step);
+      const cdf = [0];
+      midpointMass.forEach((value) => {
+        cdf.push(cdf[cdf.length - 1] + value);
+      });
+      const total = cdf[cdf.length - 1];
+      if (!Number.isFinite(total) || total <= 0) return null;
+      for (let i = 0; i < cdf.length; i += 1) {
+        cdf[i] /= total;
+      }
+      let best = null;
+      for (let leftIndex = 0; leftIndex < cdf.length; leftIndex += 1) {
+        const target = cdf[leftIndex] + mass;
+        if (target > 1) break;
+        let rightIndex = leftIndex;
+        while (rightIndex < cdf.length && cdf[rightIndex] < target) {
+          rightIndex += 1;
+        }
+        if (rightIndex >= grid.length) break;
+        const low = Number(grid[leftIndex]);
+        const high = Number(grid[rightIndex]);
+        const width = high - low;
+        if (!best || width < best.width) {
+          best = { low, high, width };
+        }
+      }
+      return best ? { lower: best.low, upper: best.high } : null;
     }
 
     function getPosteriorInterval(posterior, mass = 0.95) {
+      if (!posterior) return null;
       const key = posteriorIntervalKey(mass);
-      const interval = posterior?.intervals?.[key];
+      if (!posterior._intervals) {
+        posterior._intervals = {};
+      }
+      if (posterior._intervals[key]) {
+        return posterior._intervals[key];
+      }
+      const grid = posteriorSummaryData?.meta?.grid || [];
+      const density = getPosteriorDensityForEntry(posterior);
+      const interval = shortestPosteriorInterval(grid, density, mass);
       if (!interval) return null;
-      const lower = Number(interval.low);
-      const upper = Number(interval.high);
-      if (!Number.isFinite(lower) || !Number.isFinite(upper)) return null;
-      return { lower, upper };
+      posterior._intervals[key] = interval;
+      return interval;
     }
 
-    async function loadPosteriorDensityData(comboKey, combination) {
-      if (!comboKey || !combination?.density_file) return null;
-      if (posteriorDensityCache.has(comboKey)) {
-        return posteriorDensityCache.get(comboKey);
+    async function loadPosteriorDensityData(comboIndex, combination) {
+      if (!Number.isInteger(comboIndex) || !Array.isArray(combination?.[1])) return null;
+      if (posteriorDensityCache.has(comboIndex)) {
+        return posteriorDensityCache.get(comboIndex);
       }
-      if (posteriorDensityRequests.has(comboKey)) {
-        return posteriorDensityRequests.get(comboKey);
+      if (posteriorDensityRequests.has(comboIndex)) {
+        return posteriorDensityRequests.get(comboIndex);
       }
-      const request = fetch(combination.density_file, { cache: "no-cache" })
+      const densityFile = `posteriors/densities/combo_${String(comboIndex).padStart(5, "0")}.json`;
+      const request = fetch(densityFile, { cache: "no-cache" })
         .then((response) => {
           if (!response.ok) {
             throw new Error(`Failed to load posterior density data: ${response.statusText}`);
@@ -3422,26 +3499,26 @@
           return response.json();
         })
         .then((payload) => {
-          posteriorDensityCache.set(comboKey, payload);
-          posteriorDensityRequests.delete(comboKey);
+          posteriorDensityCache.set(comboIndex, payload);
+          posteriorDensityRequests.delete(comboIndex);
           return payload;
         })
         .catch((err) => {
-          posteriorDensityRequests.delete(comboKey);
+          posteriorDensityRequests.delete(comboIndex);
           throw err;
         });
-      posteriorDensityRequests.set(comboKey, request);
+      posteriorDensityRequests.set(comboIndex, request);
       return request;
     }
 
     function requestActivePosteriorDensityData() {
-      const comboKey = getActivePosteriorOptionKey();
+      const comboIndex = getActivePosteriorComboIndex();
       const combination = getActivePosteriorCombination();
-      if (!comboKey || !combination?.density_file) return;
-      if (posteriorDensityCache.has(comboKey) || posteriorDensityRequests.has(comboKey)) return;
-      loadPosteriorDensityData(comboKey, combination)
+      if (!Number.isInteger(comboIndex) || !Array.isArray(combination?.[1])) return;
+      if (posteriorDensityCache.has(comboIndex) || posteriorDensityRequests.has(comboIndex)) return;
+      loadPosteriorDensityData(comboIndex, combination)
         .then(() => {
-          if (comboKey === getActivePosteriorOptionKey()) {
+          if (comboIndex === getActivePosteriorComboIndex()) {
             updateTree();
           }
         })
@@ -3452,12 +3529,31 @@
 
     function getPosteriorDensityForEntry(posterior) {
       if (!posterior) return null;
-      const comboKey = getActivePosteriorOptionKey();
-      const densityPayload = posteriorDensityCache.get(comboKey);
-      const sourceId = posterior.density_source_id;
-      const density = densityPayload?.nodes?.[sourceId];
+      const comboIndex = getActivePosteriorComboIndex();
+      const densityPayload = posteriorDensityCache.get(comboIndex);
+      const density = densityPayload?.[posterior.density_source_index];
       if (!Array.isArray(density)) return null;
       return posterior.density_reverse ? [...density].reverse() : density;
+    }
+
+    function getPosteriorMode(posterior) {
+      if (!posterior) return null;
+      if (Number.isFinite(posterior._mode)) {
+        return posterior._mode;
+      }
+      const grid = posteriorSummaryData?.meta?.grid || [];
+      const density = getPosteriorDensityForEntry(posterior);
+      if (!Array.isArray(grid) || !Array.isArray(density) || grid.length !== density.length || !grid.length) {
+        return null;
+      }
+      let bestIndex = 0;
+      for (let i = 1; i < density.length; i += 1) {
+        if (Number(density[i]) > Number(density[bestIndex])) {
+          bestIndex = i;
+        }
+      }
+      posterior._mode = Number(grid[bestIndex]);
+      return posterior._mode;
     }
 
     function determineBranchKey(childConditions, parentConditions) {
@@ -3548,8 +3644,9 @@
         }
       }
 
-      if (Number.isFinite(posterior?.mode)) {
-        const modeX = Number(posterior.mode);
+      const posteriorMode = getPosteriorMode(posterior);
+      if (Number.isFinite(posteriorMode)) {
+        const modeX = Number(posteriorMode);
         const modeIndex = xs.reduce((bestIndex, value, index) => (
           Math.abs(value - modeX) < Math.abs(xs[bestIndex] - modeX) ? index : bestIndex
         ), 0);
@@ -3631,7 +3728,8 @@
       }
       if (betaTooltipMeta) {
         const meanText = Number.isFinite(posterior.mean) ? formatPercent(posterior.mean) : "—";
-        const modeText = Number.isFinite(posterior.mode) ? formatPercent(posterior.mode) : "—";
+        const posteriorMode = getPosteriorMode(posterior);
+        const modeText = Number.isFinite(posteriorMode) ? formatPercent(posteriorMode) : "—";
         betaTooltipMeta.textContent = `Mean ${meanText} | Mode ${modeText}`;
       }
       if (betaTooltipRange) {
@@ -4020,13 +4118,13 @@
           node.weightSum = null;
           node.parentWeightSum = null;
           node.posterior = null;
-          if (posteriorCombination && Number.isFinite(Number(posteriorCombination.root_event_count))) {
-            node.count = Number(posteriorCombination.root_event_count);
+          if (Array.isArray(posteriorCombination) && Number.isFinite(Number(posteriorCombination[0]))) {
+            node.count = Number(posteriorCombination[0]);
           }
           return;
         }
 
-        const posterior = posteriorCombination?.nodes?.[node.id] || null;
+        const posterior = getPosteriorNodeEntry(node.id);
         node.weightSum = null;
         node.parentWeightSum = null;
         node.posterior = posterior;
@@ -4297,8 +4395,9 @@
       const status = document.getElementById(options.statusId || "treeStatus");
       if (!container) return;
       const posteriorCombination = getActivePosteriorCombination();
-      const hasPosteriorEvents = Number.isFinite(Number(posteriorCombination?.root_event_count))
-        && Number(posteriorCombination.root_event_count) > 0;
+      const hasPosteriorEvents = Array.isArray(posteriorCombination)
+        && Number.isFinite(Number(posteriorCombination[0]))
+        && Number(posteriorCombination[0]) > 0;
       const previousContainerHeight = container.getBoundingClientRect().height;
       const previousEdgePaths = getTreeEdgePaths(container);
       const previousPositions = getTreeNodePositions(container);
