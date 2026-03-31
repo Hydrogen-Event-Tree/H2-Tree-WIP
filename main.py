@@ -514,19 +514,10 @@ def _model_slug(model: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in model)
 
 
-def _parse_args():
-    parser = argparse.ArgumentParser(description="Generate and serve HIAD event data.")
-    parser.add_argument("--generate", action="store_true", help="Generate model outputs from the HIAD source data.")
-    parser.add_argument("--serve", action="store_true", help="Run the local dashboard server.")
-    parser.add_argument("--port", type=int, default=4000, help="Dashboard server port.")
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = _parse_args()
-    should_serve = args.serve or not args.generate
+    gen = 1
 
-    if args.generate:
+    if gen:
         shared_event_records = build_shared_event_records()
         for model_config in LLMS:
             events_path = _model_events_path(model_config)
@@ -538,5 +529,4 @@ if __name__ == "__main__":
 
         save_events_manifest(LLMS, shared_events=shared_event_records)
 
-    if should_serve:
-        run_dashboard(port=args.port)
+    run_dashboard(4000)
