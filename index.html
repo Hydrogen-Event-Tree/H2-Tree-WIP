@@ -207,6 +207,28 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .control-reset-button {
+      margin-left: auto;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-family: var(--title-font);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .control-reset-button:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .control-reset-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .export-button {
       margin-left: 0;
     }
@@ -472,6 +494,9 @@
       gap: 12px;
       flex-wrap: wrap;
       margin-bottom: 3px;
+    }
+    .controls-header {
+      align-items: center;
     }
     .details-header {
       position: relative;
@@ -1746,8 +1771,11 @@
       <div class="tab-panel active" id="treePanel">
         <div class="tree-layout">
           <div class="card tree-controls-card">
-            <div class="card-header">
+            <div class="card-header controls-header">
               <h2 class="card-title-main">Controls</h2>
+              <button class="control-reset-button" id="resetTreeControls" type="button" disabled>
+                Reset defaults
+              </button>
             </div>
             <div class="control-block">
               <div class="control-label">Include events</div>
@@ -1789,6 +1817,10 @@
                   </div>
                 </label>
               </div>
+            </div>
+            <div class="control-block">
+              <div class="control-label">Models</div>
+              <div class="control-options" id="modelFilterControls"></div>
             </div>
             <div class="control-block">
               <div class="control-label">Uncertainty display</div>
@@ -1833,7 +1865,7 @@
                   <input type="checkbox" id="toggleDistributionAlways" checked />
                   <div class="control-text">
                     <div class="control-title">Always show distribution</div>
-                    <div class="control-subtitle">Inline beta plots for Yes/No nodes</div>
+                    <div class="control-subtitle">Inline posterior plots for Yes/No nodes</div>
                   </div>
                 </label>
               </div>
@@ -1864,7 +1896,7 @@
     </main>
   </div>
   <div id="betaHoverTooltip" class="beta-tooltip" aria-hidden="true">
-    <div class="beta-tooltip-title" id="betaTooltipTitle">Beta posterior</div>
+    <div class="beta-tooltip-title" id="betaTooltipTitle">Posterior distribution</div>
     <div class="beta-tooltip-meta" id="betaTooltipMeta"></div>
     <canvas id="betaTooltipCanvas" width="220" height="48"></canvas>
     <div class="beta-tooltip-range" id="betaTooltipRange"></div>
@@ -1959,8 +1991,20 @@
     const USER_ANSWERS_STORAGE_KEY = "hiad-user-answers-json";
     const USER_MODEL_ID = "user";
     const USER_MODEL_NAME = "User";
+    const POSTERIOR_OPTION_ORDER = [
+      "onlyPureH2",
+      "onlyGaseousH2",
+      "onlyPressurizedH2",
+      "onlyLossOfContainment",
+      "includeBarrierImmediate",
+      "includeBarrierDelayed",
+      "useScoreWeights",
+    ];
 
     let manifestData = null;
+    let posteriorSummaryData = null;
+    const posteriorDensityCache = new Map();
+    const posteriorDensityRequests = new Map();
     let availableModels = [];
     let activeModelId = null;
     let eventsData = [];
@@ -1982,6 +2026,7 @@
     let onlyLossOfContainment = true;
     let includeBarrierImmediate = false;
     let includeBarrierDelayed = false;
+    let selectedPosteriorModelIds = [];
     let activeTreeFilter = null;
     let selectedDistanceTruthModelId = null;
     const modelEventsCache = new Map();
@@ -1989,6 +2034,20 @@
     let manifestSharedEventsById = new Map();
     let editModeEnabled = false;
     let userAnswersByEventId = new Map();
+    const DEFAULT_TREE_CONTROL_STATE = {
+      showCounts: true,
+      showProbability: true,
+      showCredible: true,
+      credibleLevel: 0.95,
+      showDistributionAlways: true,
+      useScoreWeights: true,
+      onlyPureH2: true,
+      onlyGaseousH2: true,
+      onlyPressurizedH2: true,
+      onlyLossOfContainment: true,
+      includeBarrierImmediate: false,
+      includeBarrierDelayed: false,
+    };
 
     const TREE_OUTCOME_LABELS = [
       "Jet fire",
@@ -2874,6 +2933,151 @@
       `;
     }
 
+    function renderPosteriorModelControls() {
+      const container = document.getElementById("modelFilterControls");
+      if (!container) return;
+      if (!availableModels.length) {
+        container.innerHTML = "";
+        updateResetTreeControlsButton();
+        return;
+      }
+      const validIds = new Set(availableModels.map((model) => model.id));
+      selectedPosteriorModelIds = selectedPosteriorModelIds.filter((id) => validIds.has(id));
+      if (!selectedPosteriorModelIds.length) {
+        selectedPosteriorModelIds = availableModels.map((model) => model.id);
+      }
+      container.innerHTML = availableModels.map((model) => `
+        <label class="control-option">
+          <input
+            type="checkbox"
+            class="js-posterior-model-checkbox"
+            data-posterior-model-id="${escapeHtml(model.id)}"
+            ${selectedPosteriorModelIds.includes(model.id) ? "checked" : ""}
+          />
+          <div class="control-text">
+            <div class="control-title">${escapeHtml(model.name || model.id)}</div>
+          </div>
+        </label>
+      `).join("");
+
+      container.querySelectorAll(".js-posterior-model-checkbox").forEach((input) => {
+        input.addEventListener("change", () => {
+          selectedPosteriorModelIds = Array.from(
+            container.querySelectorAll(".js-posterior-model-checkbox:checked")
+          ).map((checkbox) => checkbox.dataset.posteriorModelId);
+          updateTree();
+        });
+      });
+      updateResetTreeControlsButton();
+    }
+
+    function getDefaultPosteriorModelIds() {
+      return availableModels.map((model) => model.id);
+    }
+
+    function getCurrentTreeControlState() {
+      return {
+        showCounts,
+        showProbability,
+        showCredible,
+        credibleLevel,
+        showDistributionAlways,
+        useScoreWeights,
+        onlyPureH2,
+        onlyGaseousH2,
+        onlyPressurizedH2,
+        onlyLossOfContainment,
+        includeBarrierImmediate,
+        includeBarrierDelayed,
+        selectedPosteriorModelIds: [...selectedPosteriorModelIds].sort(),
+      };
+    }
+
+    function getDefaultTreeControlState() {
+      return {
+        ...DEFAULT_TREE_CONTROL_STATE,
+        selectedPosteriorModelIds: [...getDefaultPosteriorModelIds()].sort(),
+      };
+    }
+
+    function isTreeControlStateDefault() {
+      const current = getCurrentTreeControlState();
+      const defaults = getDefaultTreeControlState();
+      return JSON.stringify(current) === JSON.stringify(defaults);
+    }
+
+    function updateResetTreeControlsButton() {
+      const button = document.getElementById("resetTreeControls");
+      if (!button) return;
+      button.disabled = isTreeControlStateDefault();
+    }
+
+    function updateCredLevelState() {
+      const credibleToggle = document.getElementById("toggleCredible");
+      const distributionAlwaysToggle = document.getElementById("toggleDistributionAlways");
+      const credLevelContainer = document.getElementById("credLevelControls");
+      const credLevelRadios = document.querySelectorAll("input[name='credLevel']");
+      const enabled = credibleToggle ? credibleToggle.checked : false;
+      if (credLevelContainer) {
+        credLevelContainer.classList.toggle("disabled", !enabled);
+      }
+      credLevelRadios.forEach((radio) => {
+        radio.disabled = !enabled;
+      });
+      if (distributionAlwaysToggle) {
+        distributionAlwaysToggle.disabled = !enabled;
+        if (!enabled) {
+          distributionAlwaysToggle.checked = false;
+          showDistributionAlways = false;
+        }
+      }
+    }
+
+    function syncTreeControlInputs() {
+      const checkboxStates = {
+        toggleCounts: showCounts,
+        toggleProbability: showProbability,
+        toggleCredible: showCredible,
+        toggleDistributionAlways: showDistributionAlways,
+        toggleConfidenceWeights: useScoreWeights,
+        onlyPureH2,
+        onlyGaseousH2,
+        onlyPressurizedH2,
+        onlyLossOfContainment,
+        includeBarrierImmediate,
+        includeBarrierDelayed,
+      };
+      Object.entries(checkboxStates).forEach(([id, checked]) => {
+        const input = document.getElementById(id);
+        if (input) input.checked = checked;
+      });
+      document.querySelectorAll('input[name="credLevel"]').forEach((radio) => {
+        radio.checked = Number(radio.value) === credibleLevel;
+      });
+      renderPosteriorModelControls();
+      updateCredLevelState();
+      updateResetTreeControlsButton();
+    }
+
+    function resetTreeControlsToDefault() {
+      showCounts = DEFAULT_TREE_CONTROL_STATE.showCounts;
+      showProbability = DEFAULT_TREE_CONTROL_STATE.showProbability;
+      showCredible = DEFAULT_TREE_CONTROL_STATE.showCredible;
+      credibleLevel = DEFAULT_TREE_CONTROL_STATE.credibleLevel;
+      showDistributionAlways = DEFAULT_TREE_CONTROL_STATE.showDistributionAlways;
+      useScoreWeights = DEFAULT_TREE_CONTROL_STATE.useScoreWeights;
+      onlyPureH2 = DEFAULT_TREE_CONTROL_STATE.onlyPureH2;
+      onlyGaseousH2 = DEFAULT_TREE_CONTROL_STATE.onlyGaseousH2;
+      onlyPressurizedH2 = DEFAULT_TREE_CONTROL_STATE.onlyPressurizedH2;
+      onlyLossOfContainment = DEFAULT_TREE_CONTROL_STATE.onlyLossOfContainment;
+      includeBarrierImmediate = DEFAULT_TREE_CONTROL_STATE.includeBarrierImmediate;
+      includeBarrierDelayed = DEFAULT_TREE_CONTROL_STATE.includeBarrierDelayed;
+      selectedPosteriorModelIds = getDefaultPosteriorModelIds();
+      syncTreeControlInputs();
+      refreshList({ ensureSelection: true });
+      updateTree();
+    }
+
     function renderRealizationButtonGroup(record) {
       const realizationCount = Math.max(getRealizationCount(record), 1);
       const clampedIndex = Math.min(activeRealizationIndex, realizationCount - 1);
@@ -3149,10 +3353,111 @@
       return `HPD<sub class="hpd-sub">${level}%</sub>`;
     }
 
-    function formatBetaParam(value, useWeights) {
-      if (!Number.isFinite(value)) return "—";
-      if (useWeights) return value.toFixed(1);
-      return String(Math.round(value));
+    function posteriorIntervalKey(mass) {
+      return String(Math.round(Number(mass) * 100));
+    }
+
+    function getActivePosteriorOptions() {
+      return {
+        onlyPureH2,
+        onlyGaseousH2,
+        onlyPressurizedH2,
+        onlyLossOfContainment,
+        includeBarrierImmediate,
+        includeBarrierDelayed,
+        useScoreWeights,
+      };
+    }
+
+    function posteriorModelOptionName(modelId) {
+      return `model:${modelId}`;
+    }
+
+    function getActivePosteriorOptionKey() {
+      const options = getActivePosteriorOptions();
+      const optionOrder = posteriorSummaryData?.meta?.filter_option_names || POSTERIOR_OPTION_ORDER;
+      const availablePosteriorModels = posteriorSummaryData?.meta?.available_models || [];
+      const modelParts = availablePosteriorModels.map((model) => {
+        const selected = selectedPosteriorModelIds.includes(model.id);
+        return `${posteriorModelOptionName(model.id)}:${selected ? 1 : 0}`;
+      });
+      return [
+        ...optionOrder.map((name) => `${name}:${options[name] ? 1 : 0}`),
+        ...modelParts,
+      ].join("__");
+    }
+
+    function getActivePosteriorCombination() {
+      const key = getActivePosteriorOptionKey();
+      return posteriorSummaryData?.combinations?.[key] || null;
+    }
+
+    function getPosteriorNodeEntry(nodeId) {
+      return getActivePosteriorCombination()?.nodes?.[nodeId] || null;
+    }
+
+    function getPosteriorInterval(posterior, mass = 0.95) {
+      const key = posteriorIntervalKey(mass);
+      const interval = posterior?.intervals?.[key];
+      if (!interval) return null;
+      const lower = Number(interval.low);
+      const upper = Number(interval.high);
+      if (!Number.isFinite(lower) || !Number.isFinite(upper)) return null;
+      return { lower, upper };
+    }
+
+    async function loadPosteriorDensityData(comboKey, combination) {
+      if (!comboKey || !combination?.density_file) return null;
+      if (posteriorDensityCache.has(comboKey)) {
+        return posteriorDensityCache.get(comboKey);
+      }
+      if (posteriorDensityRequests.has(comboKey)) {
+        return posteriorDensityRequests.get(comboKey);
+      }
+      const request = fetch(combination.density_file, { cache: "no-cache" })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Failed to load posterior density data: ${response.statusText}`);
+          }
+          return response.json();
+        })
+        .then((payload) => {
+          posteriorDensityCache.set(comboKey, payload);
+          posteriorDensityRequests.delete(comboKey);
+          return payload;
+        })
+        .catch((err) => {
+          posteriorDensityRequests.delete(comboKey);
+          throw err;
+        });
+      posteriorDensityRequests.set(comboKey, request);
+      return request;
+    }
+
+    function requestActivePosteriorDensityData() {
+      const comboKey = getActivePosteriorOptionKey();
+      const combination = getActivePosteriorCombination();
+      if (!comboKey || !combination?.density_file) return;
+      if (posteriorDensityCache.has(comboKey) || posteriorDensityRequests.has(comboKey)) return;
+      loadPosteriorDensityData(comboKey, combination)
+        .then(() => {
+          if (comboKey === getActivePosteriorOptionKey()) {
+            updateTree();
+          }
+        })
+        .catch((err) => {
+          console.error(err);
+        });
+    }
+
+    function getPosteriorDensityForEntry(posterior) {
+      if (!posterior) return null;
+      const comboKey = getActivePosteriorOptionKey();
+      const densityPayload = posteriorDensityCache.get(comboKey);
+      const sourceId = posterior.density_source_id;
+      const density = densityPayload?.nodes?.[sourceId];
+      if (!Array.isArray(density)) return null;
+      return posterior.density_reverse ? [...density].reverse() : density;
     }
 
     function determineBranchKey(childConditions, parentConditions) {
@@ -3166,85 +3471,20 @@
       return scoreStrength(ev?.[key]);
     }
 
-    function betaIntervalWidth(invFn, lowerProb, mass) {
-      const upperProb = lowerProb + mass;
-      if (upperProb >= 1 || lowerProb < 0) return Infinity;
-      const lower = invFn(lowerProb);
-      const upper = invFn(upperProb);
-      if (!Number.isFinite(lower) || !Number.isFinite(upper)) return Infinity;
-      return upper - lower;
-    }
-
-    function betaHighestDensityInterval(alpha, betaParam, mass = 0.95) {
-      const betaLib = typeof window !== "undefined" ? window.jStat : undefined;
-      if (!betaLib || !betaLib.beta || typeof betaLib.beta.inv !== "function") return null;
-      if (!(alpha > 0 && betaParam > 0) || !(mass > 0 && mass < 1)) return null;
-
-      const inv = (p) => betaLib.beta.inv(p, alpha, betaParam);
-      if (alpha <= 1 && betaParam > 1) {
-        return { lower: 0, upper: inv(mass) };
-      }
-      if (betaParam <= 1 && alpha > 1) {
-        return { lower: inv(1 - mass), upper: 1 };
-      }
-      if (alpha <= 1 && betaParam <= 1) {
-        return null;
-      }
-
-      let a = 0;
-      let b = 1 - mass;
-      const phi = (Math.sqrt(5) - 1) / 2;
-      let c = b - phi * (b - a);
-      let d = a + phi * (b - a);
-      let fc = betaIntervalWidth(inv, c, mass);
-      let fd = betaIntervalWidth(inv, d, mass);
-      for (let i = 0; i < 80; i++) {
-        if (Math.abs(b - a) < 1e-5) break;
-        if (fc < fd) {
-          b = d;
-          d = c;
-          fd = fc;
-          c = b - phi * (b - a);
-          fc = betaIntervalWidth(inv, c, mass);
-        } else {
-          a = c;
-          c = d;
-          fc = fd;
-          d = a + phi * (b - a);
-          fd = betaIntervalWidth(inv, d, mass);
-        }
-      }
-      const lowerProb = fc < fd ? c : d;
-      if (lowerProb < 0 || lowerProb + mass >= 1) return null;
-      const lower = inv(lowerProb);
-      const upper = inv(lowerProb + mass);
-      if (Number.isFinite(lower) && Number.isFinite(upper)) {
-        return { lower, upper };
-      }
-      const etLower = inv((1 - mass) / 2);
-      const etUpper = inv(1 - (1 - mass) / 2);
-      if (Number.isFinite(etLower) && Number.isFinite(etUpper)) {
-        return { lower: etLower, upper: etUpper };
-      }
-      return null;
-    }
-
-    function computeBetaPosterior(successWeight, totalWeight) {
-      if (!Number.isFinite(totalWeight) || totalWeight <= 0) return null;
-      const success = Math.max(0, Math.min(successWeight, totalWeight));
-      const failure = Math.max(0, totalWeight - success);
-      return { alpha: success + 1, beta: failure + 1 };
-    }
-
     function getQuestionLabel(key) {
       const match = QUESTIONS.find((q) => q.key === key);
       return match ? match.long : "Decision";
     }
 
-    function drawBetaPlot(canvas, alpha, betaParam, hdi) {
+    function drawPosteriorPlot(canvas, posterior, hdi) {
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
+      const grid = posteriorSummaryData?.meta?.grid || [];
+      const density = getPosteriorDensityForEntry(posterior) || [];
+      if (!Array.isArray(grid) || !Array.isArray(density) || !grid.length || grid.length !== density.length) {
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const cssW = rect.width || canvas.width || 1;
       const cssH = rect.height || canvas.height || 1;
@@ -3257,13 +3497,6 @@
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
-      const betaLib = typeof window !== "undefined" ? window.jStat : undefined;
-      if (!betaLib || !betaLib.beta || typeof betaLib.beta.pdf !== "function") {
-        ctx.fillStyle = "#888";
-        ctx.font = "11px sans-serif";
-        ctx.fillText("Beta distribution unavailable", 10, 22);
-        return;
-      }
 
       const style = getComputedStyle(document.documentElement);
       const lineColor = style.getPropertyValue("--text").trim() || "#1f2933";
@@ -3275,18 +3508,11 @@
       const innerW = cssW - padding.left - padding.right;
       const innerH = cssH - padding.top - padding.bottom;
       const baseY = padding.top + innerH;
-      const eps = 1e-4;
-      const samples = Math.min(1400, Math.max(480, Math.round(innerW * 6)));
-      const xs = [];
-      const ys = [];
-      let maxY = 0;
-      for (let i = 0; i <= samples; i++) {
-        const x = eps + ((1 - 2 * eps) * i) / samples;
-        const y = betaLib.beta.pdf(x, alpha, betaParam);
-        xs.push(x);
-        ys.push(y);
-        if (Number.isFinite(y) && y > maxY) maxY = y;
-      }
+      const xs = grid.map(Number);
+      const ys = density.map(Number);
+      const maxY = ys.reduce((best, value) => (
+        Number.isFinite(value) && value > best ? value : best
+      ), 0);
       if (!Number.isFinite(maxY) || maxY <= 0) return;
 
       const xToPx = (x) => padding.left + x * innerW;
@@ -3300,8 +3526,8 @@
       ctx.stroke();
 
       if (hdi && Number.isFinite(hdi.lower) && Number.isFinite(hdi.upper)) {
-        const start = Math.max(eps, Math.min(1 - eps, hdi.lower));
-        const end = Math.max(eps, Math.min(1 - eps, hdi.upper));
+        const start = Math.max(0, Math.min(1, hdi.lower));
+        const end = Math.max(0, Math.min(1, hdi.upper));
         if (end > start) {
           ctx.beginPath();
           ctx.moveTo(xToPx(start), baseY);
@@ -3313,10 +3539,6 @@
             if (!Number.isFinite(y)) continue;
             ctx.lineTo(xToPx(x), yToPx(y));
           }
-          const endY = betaLib.beta.pdf(end, alpha, betaParam);
-          if (Number.isFinite(endY)) {
-            ctx.lineTo(xToPx(end), yToPx(endY));
-          }
           ctx.lineTo(xToPx(end), baseY);
           ctx.closePath();
           ctx.globalAlpha = 0.3;
@@ -3326,9 +3548,12 @@
         }
       }
 
-      if (alpha > 1 && betaParam > 1) {
-        const modeX = (alpha - 1) / (alpha + betaParam - 2);
-        const modeY = betaLib.beta.pdf(modeX, alpha, betaParam);
+      if (Number.isFinite(posterior?.mode)) {
+        const modeX = Number(posterior.mode);
+        const modeIndex = xs.reduce((bestIndex, value, index) => (
+          Math.abs(value - modeX) < Math.abs(xs[bestIndex] - modeX) ? index : bestIndex
+        ), 0);
+        const modeY = ys[modeIndex];
         if (Number.isFinite(modeY)) {
           const modePx = xToPx(modeX);
           const modePy = yToPx(modeY);
@@ -3397,16 +3622,17 @@
       if (!showDistributionHover || showDistributionAlways || !betaTooltip || !node) return;
       const posterior = node.posterior;
       if (!posterior) return;
+      requestActivePosteriorDensityData();
       const label = node.branchKey ? getQuestionLabel(node.branchKey) : "Decision";
       const branch = node.branchValue === true ? "Yes" : "No";
-      const hdi = node.hdi ? node.hdi[credibleLevel] : null;
+      const hdi = getPosteriorInterval(posterior, credibleLevel);
       if (betaTooltipTitle) {
         betaTooltipTitle.textContent = `${label}: ${branch}`;
       }
       if (betaTooltipMeta) {
-        const alphaText = formatBetaParam(posterior.alpha, useScoreWeights);
-        const betaText = formatBetaParam(posterior.beta, useScoreWeights);
-        betaTooltipMeta.textContent = `Beta(${alphaText}, ${betaText})`;
+        const meanText = Number.isFinite(posterior.mean) ? formatPercent(posterior.mean) : "—";
+        const modeText = Number.isFinite(posterior.mode) ? formatPercent(posterior.mode) : "—";
+        betaTooltipMeta.textContent = `Mean ${meanText} | Mode ${modeText}`;
       }
       if (betaTooltipRange) {
         if (hdi && Number.isFinite(hdi.lower) && Number.isFinite(hdi.upper)) {
@@ -3416,7 +3642,7 @@
           betaTooltipRange.textContent = "Credible interval unavailable";
         }
       }
-      drawBetaPlot(betaTooltipCanvas, posterior.alpha, posterior.beta, hdi);
+      drawPosteriorPlot(betaTooltipCanvas, posterior, hdi);
       positionBetaTooltip(clientX, clientY);
       betaTooltip.classList.add("visible");
       betaTooltip.setAttribute("aria-hidden", "false");
@@ -3702,6 +3928,7 @@
 
     function buildTreeLayout(events, treeDefinition, { useWeights = false, showDistribution = false } = {}) {
       const { decisions: decisionDefs, leaves: leafDefs, columns } = treeDefinition;
+      const posteriorCombination = getActivePosteriorCombination();
       const isCompactWidth = window.matchMedia("(max-width: 1400px)").matches;
       const isNarrowWidth = window.matchMedia("(max-width: 890px)").matches;
       const isExtraNarrowWidth = window.matchMedia("(max-width: 820px)").matches;
@@ -3793,27 +4020,24 @@
           node.weightSum = null;
           node.parentWeightSum = null;
           node.posterior = null;
+          if (posteriorCombination && Number.isFinite(Number(posteriorCombination.root_event_count))) {
+            node.count = Number(posteriorCombination.root_event_count);
+          }
           return;
         }
 
-        const parentMatches = matchesFor(parent.conditions);
-        const nodeMatches = matchesFor(node.conditions);
-        const weightFn = (ev) => scoreWeight(ev, branchKey, useWeights);
-        const parentWeightSum = parentMatches.reduce((sum, ev) => sum + weightFn(ev), 0);
-        const nodeWeightSum = nodeMatches.reduce((sum, ev) => sum + weightFn(ev), 0);
-
-        node.weightSum = nodeWeightSum;
-        node.parentWeightSum = parentWeightSum;
-        node.probability = parentWeightSum > 0 ? nodeWeightSum / parentWeightSum : 0;
-
-        const posterior = computeBetaPosterior(nodeWeightSum, parentWeightSum);
-        const masses = [0.5, 0.68, 0.95, 0.99];
-        node.hdi = {};
-        masses.forEach((mass) => {
-          const hdi = posterior ? betaHighestDensityInterval(posterior.alpha, posterior.beta, mass) : null;
-          node.hdi[mass] = hdi;
-        });
+        const posterior = posteriorCombination?.nodes?.[node.id] || null;
+        node.weightSum = null;
+        node.parentWeightSum = null;
         node.posterior = posterior;
+        node.probability = Number.isFinite(Number(posterior?.mean)) ? Number(posterior.mean) : 0;
+        if (posterior && Number.isFinite(Number(posterior.branch_event_count))) {
+          node.count = Number(posterior.branch_event_count);
+        }
+        node.hdi = {};
+        [0.5, 0.68, 0.95, 0.99].forEach((mass) => {
+          node.hdi[mass] = getPosteriorInterval(posterior, mass);
+        });
       });
 
       const minY = Math.min(...nodes.map((n) => n.y));
@@ -4072,12 +4296,15 @@
       const container = document.getElementById(options.containerId || "treeContainer");
       const status = document.getElementById(options.statusId || "treeStatus");
       if (!container) return;
+      const posteriorCombination = getActivePosteriorCombination();
+      const hasPosteriorEvents = Number.isFinite(Number(posteriorCombination?.root_event_count))
+        && Number(posteriorCombination.root_event_count) > 0;
       const previousContainerHeight = container.getBoundingClientRect().height;
       const previousEdgePaths = getTreeEdgePaths(container);
       const previousPositions = getTreeNodePositions(container);
       const previousLabelPositions = getTreeLabelPositions(container);
       const previousHeights = getTreeNodeHeights(container);
-      if (!events || events.length === 0) {
+      if ((!events || events.length === 0) && !hasPosteriorEvents) {
         if (status) {
           status.textContent = summaryText || "No events available for the tree.";
         }
@@ -4255,7 +4482,7 @@
           dist.appendChild(distCanvas);
           el.appendChild(dist);
           const hdiForPlot = showCredible ? hdi : null;
-          drawBetaPlot(distCanvas, node.posterior.alpha, node.posterior.beta, hdiForPlot);
+          drawPosteriorPlot(distCanvas, node.posterior, hdiForPlot);
         }
         container.appendChild(el);
         nodeElements[node.id] = el;
@@ -4350,6 +4577,8 @@
 
     function updateTree() {
       updateControlCounts();
+      updateResetTreeControlsButton();
+      requestActivePosteriorDensityData();
       const eventsForTree = getTreeEvents();
       const summary = eventsForTree.length ? "" : "No events available for the tree.";
       renderEventTree(eventsForTree, TREE_DEFINITION, {
@@ -4845,12 +5074,22 @@
       button.setAttribute("aria-expanded", open ? "true" : "false");
     }
 
+    async function loadPosteriorSummary() {
+      const response = await fetch("posteriors/posterior_summary.json", { cache: "no-cache" });
+      if (!response.ok) throw new Error(`Failed to load posterior summary: ${response.statusText}`);
+      posteriorSummaryData = await response.json();
+      posteriorDensityCache.clear();
+      posteriorDensityRequests.clear();
+      return posteriorSummaryData;
+    }
+
     async function loadEvents() {
       setEmptyState("Loading events...");
       try {
         const response = await fetch("events-manifest.json", { cache: "no-cache" });
         if (!response.ok) throw new Error(`Failed to load manifest: ${response.statusText}`);
         manifestData = await response.json();
+        await loadPosteriorSummary();
         cacheManifestSharedEvents(manifestData.events);
         modelEventsCache.clear();
         availableModels = normalizeModels(manifestData.models);
@@ -4859,11 +5098,12 @@
         if (!preferredId) throw new Error("No default model available.");
         activeModelId = preferredId;
         updateModelControls();
+        renderPosteriorModelControls();
         await loadAllEvents();
         await applyModelSelection(preferredId, { persist: false });
       } catch (err) {
         console.error(err);
-        setEmptyState("Unable to load events-manifest.json. Check the server output for details.");
+        setEmptyState("Unable to load events-manifest.json or posterior_summary.json. Check the server output for details.");
         updateModelControls();
       }
     }
@@ -5006,11 +5246,19 @@
         }
       });
       const sortSelect = document.getElementById("sortSelect");
+      const resetTreeControlsButton = document.getElementById("resetTreeControls");
       if (sortSelect) {
         sortMode = sortSelect.value || "id";
         sortSelect.addEventListener("change", (e) => {
           sortMode = e.target.value;
           refreshList({ ensureSelection: true });
+        });
+      }
+      if (resetTreeControlsButton) {
+        resetTreeControlsButton.addEventListener("click", () => {
+          if (!resetTreeControlsButton.disabled) {
+            resetTreeControlsToDefault();
+          }
         });
       }
       const includeNotPure = document.getElementById("onlyPureH2");
@@ -5072,25 +5320,7 @@
       const probToggle = document.getElementById("toggleProbability");
       const credibleToggle = document.getElementById("toggleCredible");
       const distributionAlwaysToggle = document.getElementById("toggleDistributionAlways");
-      const credLevelContainer = document.getElementById("credLevelControls");
       const credLevelRadios = document.querySelectorAll("input[name='credLevel']");
-
-      const updateCredLevelState = () => {
-        const enabled = credibleToggle ? credibleToggle.checked : false;
-        if (credLevelContainer) {
-          credLevelContainer.classList.toggle("disabled", !enabled);
-        }
-        credLevelRadios.forEach((radio) => {
-          radio.disabled = !enabled;
-        });
-        if (distributionAlwaysToggle) {
-          distributionAlwaysToggle.disabled = !enabled;
-          if (!enabled) {
-            distributionAlwaysToggle.checked = false;
-            showDistributionAlways = false;
-          }
-        }
-      };
 
       if (countsToggle) {
         showCounts = countsToggle.checked;

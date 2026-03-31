@@ -515,7 +515,7 @@ def _model_slug(model: str) -> str:
 
 
 if __name__ == "__main__":
-    gen = 1
+    gen = 0
 
     if gen:
         shared_event_records = build_shared_event_records()
