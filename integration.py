@@ -16,7 +16,7 @@ def _latent_samples(sample_count: int, model_count: int, seed: int) -> tuple[np.
 
 
 def _mu_from_b(b_samples: np.ndarray, truth_value: int) -> np.ndarray:
-    mu = truth_value + (b_samples - truth_value) * np.abs(2.0 * b_samples - 1.0)
+    mu = 0.5 * (b_samples + truth_value)
     return np.clip(mu, 1e-6, 1.0 - 1e-6)
 
 
@@ -30,14 +30,15 @@ def _log_g_matrix(
     sample_count, model_count = b_samples.shape
     log_g = np.zeros((sample_count, s_matrix.shape[0]), dtype=np.float64)
     mu = _mu_from_b(b_samples, truth_value)
-    nu = 1.0 / (1.0 - np.clip(tau_samples, 1e-6, 1.0 - 1e-6))
+    tau = np.clip(tau_samples, 1e-6, 1.0 - 1e-6)
+    concentration = (1.0 - tau) / tau
 
     for model_index in range(model_count):
-        mu_nu = (mu[:, model_index] * nu[:, model_index])[:, None]
-        one_minus_mu_nu = ((1.0 - mu[:, model_index]) * nu[:, model_index])[:, None]
+        alpha = (mu[:, model_index] * concentration[:, model_index])[:, None]
+        beta = ((1.0 - mu[:, model_index]) * concentration[:, model_index])[:, None]
         s_values = s_matrix[:, model_index][None, :]
         n_values = n_matrix[:, model_index][None, :]
-        log_g += betaln(s_values + mu_nu, n_values - s_values + one_minus_mu_nu) - betaln(mu_nu, one_minus_mu_nu)
+        log_g += betaln(s_values + alpha, n_values - s_values + beta) - betaln(alpha, beta)
 
     return log_g
 

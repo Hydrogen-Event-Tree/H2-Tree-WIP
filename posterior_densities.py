@@ -637,24 +637,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="posteriors", help="Directory to write posterior plots into.")
     parser.add_argument("--samples", type=int, default=1024, help="Number of latent-space integration samples.")
     parser.add_argument("--grid-size", type=int, default=401, help="Number of probability grid points.")
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=8,
-        help="Number of p-grid points to evaluate together.",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=8,
-        help="Number of worker processes to use for combination-level parallelism.",
-    )
+    parser.add_argument("--chunk-size",type=int,default=8,help="Number of p-grid points to evaluate together.")
+    parser.add_argument("--workers", type=int, default=8, help="Number of worker processes to use for combination-level parallelism.")
     parser.add_argument("--seed", type=int, default=7, help="Random seed for QMC/MC integration.")
-    parser.add_argument(
-        "--generate-plots",
-        action="store_true",
-        help="Also save posterior PNGs for every precomputed option combination.",
-    )
+    parser.add_argument("--generate-plots", action="store_true", help="Also save posterior PNGs for every precomputed option combination.")
     return parser.parse_args()
 
 
