@@ -16,7 +16,8 @@ def _latent_samples(sample_count: int, model_count: int, seed: int) -> tuple[np.
 
 
 def _mu_from_b(b_samples: np.ndarray, truth_value: int) -> np.ndarray:
-    mu = 0.5 * (b_samples + truth_value)
+    z_term = (2 * truth_value) - 1
+    mu = 0.5 * (1.0 + z_term * b_samples)
     return np.clip(mu, 1e-6, 1.0 - 1e-6)
 
 
