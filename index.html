@@ -3496,16 +3496,20 @@
       ].join("__");
     }
 
-    function getActivePosteriorComboIndex() {
+    function getPosteriorComboIndexForState({
+      options = getActivePosteriorOptions(),
+      modelIds = selectedPosteriorModelIds,
+      seedCount = ensureSelectedSeedCount(),
+    } = {}) {
       const optionNames = posteriorSummaryData?.meta?.option_names || [];
       if (!optionNames.length) return null;
       let value = 0;
       optionNames.forEach((name, bitIndex) => {
         let enabled = false;
         if (name.startsWith("model:")) {
-          enabled = selectedPosteriorModelIds.includes(name.slice("model:".length));
+          enabled = modelIds.includes(name.slice("model:".length));
         } else {
-          enabled = !!getActivePosteriorOptions()[name];
+          enabled = !!options[name];
         }
         if (enabled) {
           value += Math.pow(2, bitIndex);
@@ -3515,13 +3519,22 @@
       const hasSeedDimension = Array.isArray(meta.available_seed_counts) || Array.isArray(meta.seed_counts);
       if (!hasSeedDimension) return value;
       const seedCounts = getAvailableSeedCounts();
-      const seedIndex = seedCounts.indexOf(ensureSelectedSeedCount());
+      const seedIndex = seedCounts.indexOf(seedCount);
       if (seedIndex < 0) return value;
       return seedIndex * Math.pow(2, optionNames.length) + value;
     }
 
+    function getActivePosteriorComboIndex() {
+      return getPosteriorComboIndexForState();
+    }
+
     function getActivePosteriorCombination() {
       const index = getActivePosteriorComboIndex();
+      if (!Number.isInteger(index)) return null;
+      return posteriorSummaryData?.combinations?.[index] || null;
+    }
+
+    function getPosteriorCombinationByIndex(index) {
       if (!Number.isInteger(index)) return null;
       return posteriorSummaryData?.combinations?.[index] || null;
     }
@@ -3640,6 +3653,56 @@
         .catch((err) => {
           console.error(err);
         });
+    }
+
+    function prefetchPosteriorDensityData(comboIndex) {
+      const combination = getPosteriorCombinationByIndex(comboIndex);
+      if (!Number.isInteger(comboIndex) || !Array.isArray(combination?.[1])) return;
+      if (posteriorDensityCache.has(comboIndex) || posteriorDensityRequests.has(comboIndex)) return;
+      loadPosteriorDensityData(comboIndex, combination).catch((err) => {
+        console.error(err);
+      });
+    }
+
+    function getPosteriorControlPrefetchIndex(element) {
+      if (!posteriorSummaryData || !(element instanceof Element)) return null;
+
+      const seedButton = element.closest(".seed-button");
+      if (seedButton) {
+        const seedCount = Number(seedButton.dataset.seedCount);
+        if (!Number.isInteger(seedCount) || seedCount === selectedSeedCount) return null;
+        return getPosteriorComboIndexForState({ seedCount });
+      }
+
+      const option = element.closest(".control-option");
+      if (!option) return null;
+      const input = option.querySelector("input[type='checkbox']");
+      if (!(input instanceof HTMLInputElement)) return null;
+      const nextChecked = !input.checked;
+      const options = { ...getActivePosteriorOptions() };
+      let modelIds = [...selectedPosteriorModelIds];
+
+      if (input.classList.contains("js-posterior-model-checkbox")) {
+        const modelId = input.dataset.posteriorModelId;
+        if (!modelId) return null;
+        modelIds = nextChecked
+          ? [...new Set([...modelIds, modelId])]
+          : modelIds.filter((id) => id !== modelId);
+      } else if (input.id === "toggleConfidenceWeights") {
+        options.useScoreWeights = nextChecked;
+      } else if (Object.prototype.hasOwnProperty.call(options, input.id)) {
+        options[input.id] = nextChecked;
+      } else {
+        return null;
+      }
+
+      return getPosteriorComboIndexForState({ options, modelIds });
+    }
+
+    function maybePrefetchPosteriorForControl(element) {
+      const comboIndex = getPosteriorControlPrefetchIndex(element);
+      if (!Number.isInteger(comboIndex) || comboIndex === getActivePosteriorComboIndex()) return;
+      prefetchPosteriorDensityData(comboIndex);
     }
 
     function getPosteriorDensityForEntry(posterior) {
@@ -5355,6 +5418,20 @@
         const container = target.closest(".hover-detail");
         if (!(container instanceof HTMLElement)) return;
         requestAnimationFrame(() => positionHoverDetailPopup(container));
+      });
+      document.addEventListener("pointerenter", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const control = target.closest(".control-option, .seed-button");
+        if (!control) return;
+        maybePrefetchPosteriorForControl(control);
+      }, true);
+      document.addEventListener("focusin", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const control = target.closest(".control-option, .seed-button");
+        if (!control) return;
+        maybePrefetchPosteriorForControl(control);
       });
       if (actionsMenuButton) {
         actionsMenuButton.addEventListener("click", () => {

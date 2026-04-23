@@ -47,8 +47,8 @@ LLMS = [
         "provider": "openrouter",
     },
     {
-        "name": "Qwen3.5 397B",
-        "model": "qwen/qwen3.5-397b-a17b",
+        "name": "Qwen3.3 Plus",
+        "model": "qwen/qwen3.6-plus",
         "provider": "openrouter",
     },
     #{"name": "Qwen3.5-4B", "model": "qwen3.5:4b", "provider": "ollama"},
