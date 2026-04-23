@@ -1425,6 +1425,39 @@
       border-color: var(--accent);
       color: var(--accent);
     }
+    .seed-button-group {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--card);
+      width: fit-content;
+    }
+    .seed-button {
+      min-width: 48px;
+      border: none;
+      border-right: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      padding: 8px 12px;
+      cursor: pointer;
+      font-family: var(--title-font);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .seed-button:last-child {
+      border-right: none;
+    }
+    .seed-button.active {
+      background: var(--active-bg);
+      color: var(--accent);
+    }
+    .seed-button:disabled {
+      cursor: default;
+    }
     .reasoning-box {
       background: var(--code-bg);
       border: 1px solid var(--code-border);
@@ -1823,6 +1856,10 @@
               <div class="control-options" id="modelFilterControls"></div>
             </div>
             <div class="control-block">
+              <div class="control-label">Seeds</div>
+              <div class="control-options" id="seedCountControls"></div>
+            </div>
+            <div class="control-block">
               <div class="control-label">Uncertainty display</div>
               <div class="control-options">
                 <label class="control-option">
@@ -2027,6 +2064,7 @@
     let includeBarrierImmediate = false;
     let includeBarrierDelayed = false;
     let selectedPosteriorModelIds = [];
+    let selectedSeedCount = null;
     let activeTreeFilter = null;
     let selectedDistanceTruthModelId = null;
     const modelEventsCache = new Map();
@@ -2975,6 +3013,72 @@
       return availableModels.map((model) => model.id);
     }
 
+    function getAvailableSeedCounts() {
+      const meta = posteriorSummaryData?.meta || {};
+      const rawCounts = Array.isArray(meta.available_seed_counts)
+        ? meta.available_seed_counts
+        : Array.isArray(meta.seed_counts)
+          ? meta.seed_counts
+          : [meta.realizations_per_model];
+      const counts = rawCounts
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0);
+      return [...new Set(counts)].sort((left, right) => left - right);
+    }
+
+    function getDefaultSeedCount() {
+      const counts = getAvailableSeedCounts();
+      const configured = Number(posteriorSummaryData?.meta?.default_seed_count);
+      if (Number.isInteger(configured) && counts.includes(configured)) return configured;
+      return counts[counts.length - 1] || 1;
+    }
+
+    function ensureSelectedSeedCount() {
+      const counts = getAvailableSeedCounts();
+      if (!counts.length) {
+        selectedSeedCount = 1;
+        return selectedSeedCount;
+      }
+      if (!counts.includes(selectedSeedCount)) {
+        selectedSeedCount = getDefaultSeedCount();
+      }
+      return selectedSeedCount;
+    }
+
+    function renderSeedCountControls() {
+      const container = document.getElementById("seedCountControls");
+      if (!container) return;
+      const counts = getAvailableSeedCounts();
+      if (!counts.length) {
+        container.innerHTML = "";
+        updateResetTreeControlsButton();
+        return;
+      }
+      const activeCount = ensureSelectedSeedCount();
+      container.innerHTML = `
+        <div class="seed-button-group" role="group" aria-label="Number of seeds to include">
+          ${counts.map((count) => `
+            <button
+              class="seed-button${count === activeCount ? " active" : ""}"
+              type="button"
+              data-seed-count="${count}"
+              ${counts.length === 1 ? "disabled" : ""}
+            >${count}</button>
+          `).join("")}
+        </div>
+      `;
+      container.querySelectorAll(".seed-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextCount = Number(button.dataset.seedCount);
+          if (!Number.isInteger(nextCount) || nextCount === selectedSeedCount) return;
+          selectedSeedCount = nextCount;
+          renderSeedCountControls();
+          updateTree();
+        });
+      });
+      updateResetTreeControlsButton();
+    }
+
     function getCurrentTreeControlState() {
       return {
         showCounts,
@@ -2990,6 +3094,7 @@
         includeBarrierImmediate,
         includeBarrierDelayed,
         selectedPosteriorModelIds: [...selectedPosteriorModelIds].sort(),
+        selectedSeedCount: ensureSelectedSeedCount(),
       };
     }
 
@@ -2997,6 +3102,7 @@
       return {
         ...DEFAULT_TREE_CONTROL_STATE,
         selectedPosteriorModelIds: [...getDefaultPosteriorModelIds()].sort(),
+        selectedSeedCount: getDefaultSeedCount(),
       };
     }
 
@@ -3055,6 +3161,7 @@
         radio.checked = Number(radio.value) === credibleLevel;
       });
       renderPosteriorModelControls();
+      renderSeedCountControls();
       updateCredLevelState();
       updateResetTreeControlsButton();
     }
@@ -3073,6 +3180,7 @@
       includeBarrierImmediate = DEFAULT_TREE_CONTROL_STATE.includeBarrierImmediate;
       includeBarrierDelayed = DEFAULT_TREE_CONTROL_STATE.includeBarrierDelayed;
       selectedPosteriorModelIds = getDefaultPosteriorModelIds();
+      selectedSeedCount = getDefaultSeedCount();
       syncTreeControlInputs();
       refreshList({ ensureSelection: true });
       updateTree();
@@ -3382,6 +3490,7 @@
         return `${posteriorModelOptionName(model.id)}:${selected ? 1 : 0}`;
       });
       return [
+        `seedCount:${ensureSelectedSeedCount()}`,
         ...optionOrder.map((name) => `${name}:${options[name] ? 1 : 0}`),
         ...modelParts,
       ].join("__");
@@ -3399,10 +3508,16 @@
           enabled = !!getActivePosteriorOptions()[name];
         }
         if (enabled) {
-          value |= (1 << bitIndex);
+          value += Math.pow(2, bitIndex);
         }
       });
-      return value;
+      const meta = posteriorSummaryData?.meta || {};
+      const hasSeedDimension = Array.isArray(meta.available_seed_counts) || Array.isArray(meta.seed_counts);
+      if (!hasSeedDimension) return value;
+      const seedCounts = getAvailableSeedCounts();
+      const seedIndex = seedCounts.indexOf(ensureSelectedSeedCount());
+      if (seedIndex < 0) return value;
+      return seedIndex * Math.pow(2, optionNames.length) + value;
     }
 
     function getActivePosteriorCombination() {
@@ -5176,6 +5291,7 @@
       const response = await fetch("posteriors/posterior_summary.json", { cache: "no-cache" });
       if (!response.ok) throw new Error(`Failed to load posterior summary: ${response.statusText}`);
       posteriorSummaryData = await response.json();
+      ensureSelectedSeedCount();
       posteriorDensityCache.clear();
       posteriorDensityRequests.clear();
       return posteriorSummaryData;
@@ -5197,6 +5313,7 @@
         activeModelId = preferredId;
         updateModelControls();
         renderPosteriorModelControls();
+        renderSeedCountControls();
         await loadAllEvents();
         await applyModelSelection(preferredId, { persist: false });
       } catch (err) {

@@ -203,12 +203,6 @@ def model_option_name(model_id: str) -> str:
     return f"model:{model_id}"
 
 
-def option_key(options: dict[str, bool], model_ids: list[str]) -> str:
-    parts = [f"{name}:{1 if options[name] else 0}" for name in FILTER_OPTION_NAMES]
-    parts.extend(f"{model_option_name(model_id)}:{1 if options[model_option_name(model_id)] else 0}" for model_id in model_ids)
-    return "__".join(parts)
-
-
 def option_names(model_ids: list[str]) -> list[str]:
     return FILTER_OPTION_NAMES + [model_option_name(model_id) for model_id in model_ids]
 
@@ -241,6 +235,14 @@ def iter_filter_options(model_ids: list[str]) -> list[dict[str, bool]]:
             options[name] = bool((bits >> index) & 1)
         combinations.append(options)
     return combinations
+
+
+def seed_counts_for_answer_count(answer_count: int) -> list[int]:
+    return list(range(1, max(1, answer_count) + 1))
+
+
+def limited_scores(record: dict[str, Any], key: str, answer_count: int) -> list[Any]:
+    return ensure_array(record.get(key))[: max(1, answer_count)]
 
 
 def format_probability(value: float) -> str:
@@ -398,16 +400,27 @@ def load_aggregated_events(root: Path, manifest_path: Path) -> tuple[list[dict[s
     if not events:
         raise ValueError("No events contain a full set of model records.")
 
-    first_record = events[0]["records_by_model"][model_ids[0]]
-    inferred_answers = max(len(first_record.get(field, [])) for field in SCORE_FIELDS)
-    return events, len(model_ids), answers_per_model or inferred_answers
+    inferred_answers = 0
+    for event in events:
+        for model_id in model_ids:
+            record = event["records_by_model"][model_id]
+            inferred_answers = max(
+                inferred_answers,
+                *(len(ensure_array(record.get(field))) for field in SCORE_FIELDS),
+            )
+    return events, len(model_ids), max(answers_per_model, inferred_answers)
 
 
-def event_average_score(event: dict[str, Any], key: str, selected_model_ids: list[str]) -> float | None:
+def event_average_score(
+    event: dict[str, Any],
+    key: str,
+    selected_model_ids: list[str],
+    answer_count: int,
+) -> float | None:
     values: list[float] = []
     for model_id in selected_model_ids:
         record = event["records_by_model"][model_id]
-        for value in ensure_array(record.get(key)):
+        for value in limited_scores(record, key, answer_count):
             normalized = normalize_score(value)
             if normalized is not None:
                 values.append(normalized)
@@ -416,47 +429,65 @@ def event_average_score(event: dict[str, Any], key: str, selected_model_ids: lis
     return float(np.mean(values))
 
 
-def event_majority(event: dict[str, Any], key: str, selected_model_ids: list[str]) -> bool:
-    avg = event_average_score(event, key, selected_model_ids)
+def event_majority(event: dict[str, Any], key: str, selected_model_ids: list[str], answer_count: int) -> bool:
+    avg = event_average_score(event, key, selected_model_ids, answer_count)
     return bool(avg is not None and avg > 5.0)
 
 
-def barrier_immediate_majority(event: dict[str, Any], selected_model_ids: list[str]) -> bool:
-    return event_majority(event, "barrier_stopped_immediate_ignition", selected_model_ids)
+def barrier_immediate_majority(event: dict[str, Any], selected_model_ids: list[str], answer_count: int) -> bool:
+    return event_majority(event, "barrier_stopped_immediate_ignition", selected_model_ids, answer_count)
 
 
-def barrier_delayed_majority(event: dict[str, Any], selected_model_ids: list[str]) -> bool:
-    return event_majority(event, "barrier_stopped_delayed_ignition", selected_model_ids) and not event_majority(
-        event, "immediate_ignition", selected_model_ids
+def barrier_delayed_majority(event: dict[str, Any], selected_model_ids: list[str], answer_count: int) -> bool:
+    return event_majority(
+        event, "barrier_stopped_delayed_ignition", selected_model_ids, answer_count
+    ) and not event_majority(
+        event, "immediate_ignition", selected_model_ids, answer_count
     )
 
 
-def is_included_event(event: dict[str, Any], options: dict[str, bool], selected_model_ids: list[str]) -> bool:
+def is_included_event(
+    event: dict[str, Any],
+    options: dict[str, bool],
+    selected_model_ids: list[str],
+    answer_count: int,
+) -> bool:
     if not selected_model_ids:
         return False
-    if options["onlyPureH2"] and not event_majority(event, "pure_h2", selected_model_ids):
+    if options["onlyPureH2"] and not event_majority(event, "pure_h2", selected_model_ids, answer_count):
         return False
-    if options["onlyGaseousH2"] and not event_majority(event, "gaseous_h2", selected_model_ids):
+    if options["onlyGaseousH2"] and not event_majority(event, "gaseous_h2", selected_model_ids, answer_count):
         return False
-    if options["onlyPressurizedH2"] and not event_majority(event, "pressurized_h2", selected_model_ids):
+    if options["onlyPressurizedH2"] and not event_majority(event, "pressurized_h2", selected_model_ids, answer_count):
         return False
-    if options["onlyLossOfContainment"] and not event_majority(event, "loss_of_containment", selected_model_ids):
+    if options["onlyLossOfContainment"] and not event_majority(
+        event, "loss_of_containment", selected_model_ids, answer_count
+    ):
         return False
-    if not options["includeBarrierImmediate"] and barrier_immediate_majority(event, selected_model_ids):
+    if not options["includeBarrierImmediate"] and barrier_immediate_majority(event, selected_model_ids, answer_count):
         return False
-    if not options["includeBarrierDelayed"] and barrier_delayed_majority(event, selected_model_ids):
+    if not options["includeBarrierDelayed"] and barrier_delayed_majority(event, selected_model_ids, answer_count):
         return False
     return True
 
 
-def matches_parent_conditions(event: dict[str, Any], conditions: dict[str, bool], selected_model_ids: list[str]) -> bool:
-    return all(event_majority(event, key, selected_model_ids) == expected for key, expected in conditions.items())
+def matches_parent_conditions(
+    event: dict[str, Any],
+    conditions: dict[str, bool],
+    selected_model_ids: list[str],
+    answer_count: int,
+) -> bool:
+    return all(
+        event_majority(event, key, selected_model_ids, answer_count) == expected
+        for key, expected in conditions.items()
+    )
 
 
 def build_weight_matrices(
     events: list[dict[str, Any]],
     question: str,
     selected_model_ids: list[str],
+    answer_count: int,
     use_score_strength: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     s_matrix = np.zeros((len(events), len(selected_model_ids)), dtype=np.float64)
@@ -467,7 +498,7 @@ def build_weight_matrices(
             record = event["records_by_model"][model_id]
             weights = []
             weighted_answers = []
-            for score in ensure_array(record.get(question)):
+            for score in limited_scores(record, question, answer_count):
                 answer, weight = score_to_answer_weight(score, use_score_strength=use_score_strength)
                 weights.append(weight)
                 weighted_answers.append(answer * weight)
@@ -511,7 +542,6 @@ def serialize_node_summary(branch_event_count: int, stats: dict[str, float]) -> 
 
 def init_worker_state(
     events: list[dict[str, Any]],
-    answer_count: int,
     p_grid: np.ndarray,
     sample_count: int,
     seed: int,
@@ -523,7 +553,6 @@ def init_worker_state(
     global WORKER_STATE
     WORKER_STATE = {
         "events": events,
-        "answer_count": answer_count,
         "p_grid": p_grid,
         "sample_count": sample_count,
         "seed": seed,
@@ -534,9 +563,13 @@ def init_worker_state(
     }
 
 
-def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: list[str]) -> tuple[int, list[Any]]:
+def compute_combo_entry(
+    combo_index: int,
+    options: dict[str, bool],
+    model_ids: list[str],
+    answer_count: int,
+) -> tuple[int, list[Any]]:
     events: list[dict[str, Any]] = WORKER_STATE["events"]
-    answer_count: int = WORKER_STATE["answer_count"]
     p_grid: np.ndarray = WORKER_STATE["p_grid"]
     sample_count: int = WORKER_STATE["sample_count"]
     seed: int = WORKER_STATE["seed"]
@@ -547,7 +580,11 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
 
     selected_model_ids = selected_model_ids_from_options(options, model_ids)
     density_file = densities_dir / f"combo_{combo_index:05d}.json"
-    included_events = [event for event in events if is_included_event(event, options, selected_model_ids)]
+    included_events = [
+        event
+        for event in events
+        if is_included_event(event, options, selected_model_ids, answer_count)
+    ]
     node_order = [spec.yes_node_id for spec in BRANCH_SPECS] + [spec.no_node_id for spec in BRANCH_SPECS]
     node_index_by_id = {node_id: index for index, node_id in enumerate(node_order)}
     combo_entry: list[Any] = [len(included_events), None]
@@ -560,7 +597,7 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
         parent_events = [
             event
             for event in included_events
-            if matches_parent_conditions(event, spec.parent_conditions, selected_model_ids)
+            if matches_parent_conditions(event, spec.parent_conditions, selected_model_ids, answer_count)
         ]
         if not parent_events:
             continue
@@ -569,6 +606,7 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
             parent_events,
             spec.question,
             selected_model_ids,
+            answer_count=answer_count,
             use_score_strength=options["useScoreWeights"],
         )
         density_yes = posterior_density(
@@ -592,11 +630,11 @@ def compute_combo_entry(combo_index: int, options: dict[str, bool], model_ids: l
             branch_event_count = sum(
                 1
                 for event in parent_events
-                if event_majority(event, spec.question, selected_model_ids) == branch_value
+                if event_majority(event, spec.question, selected_model_ids, answer_count) == branch_value
             )
             output_path = None
             if generate_plots:
-                combo_plot_dir = plots_dir / combo_key
+                combo_plot_dir = plots_dir / f"combo_{combo_index:05d}"
                 combo_plot_dir.mkdir(parents=True, exist_ok=True)
                 output_path = combo_plot_dir / f"{node_id}.png"
                 plot_density(
@@ -635,7 +673,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compute posterior plots for every event-tree branch.")
     parser.add_argument("--manifest", default="events-manifest.json", help="Path to the events manifest.")
     parser.add_argument("--output-dir", default="posteriors", help="Directory to write posterior plots into.")
-    parser.add_argument("--samples", type=int, default=1024, help="Number of latent-space integration samples.")
+    parser.add_argument("--samples", type=int, default=2048, help="Number of latent-space integration samples.")
     parser.add_argument("--grid-size", type=int, default=401, help="Number of probability grid points.")
     parser.add_argument("--chunk-size",type=int,default=8,help="Number of p-grid points to evaluate together.")
     parser.add_argument("--workers", type=int, default=8, help="Number of worker processes to use for combination-level parallelism.")
@@ -670,6 +708,9 @@ def main() -> None:
     ]
     default_option_values = default_options(model_ids)
     all_option_names = option_names(model_ids)
+    available_seed_counts = seed_counts_for_answer_count(answer_count)
+    default_seed_count = available_seed_counts[-1]
+    base_combo_count = 1 << len(all_option_names)
     node_order = [spec.yes_node_id for spec in BRANCH_SPECS] + [spec.no_node_id for spec in BRANCH_SPECS]
     yes_node_order = [spec.yes_node_id for spec in BRANCH_SPECS]
     node_density_map = []
@@ -687,10 +728,13 @@ def main() -> None:
             "workers": max(1, args.workers),
             "model_count": model_count,
             "realizations_per_model": answer_count,
+            "available_seed_counts": available_seed_counts,
+            "default_seed_count": default_seed_count,
             "grid": round_float_list(p_grid),
             "option_names": all_option_names,
             "available_models": model_entries,
-            "default_combo_index": option_combo_index(default_option_values, all_option_names),
+            "default_combo_index": (len(available_seed_counts) - 1) * base_combo_count
+            + option_combo_index(default_option_values, all_option_names),
             "node_order": node_order,
             "yes_node_order": yes_node_order,
             "node_density_map": node_density_map,
@@ -701,12 +745,20 @@ def main() -> None:
 
     filter_options_list = iter_filter_options(model_ids)
     combo_results: dict[int, list[Any]] = {}
+    combo_jobs = [
+        (
+            seed_index * len(filter_options_list) + option_index,
+            options,
+            seed_count,
+        )
+        for seed_index, seed_count in enumerate(available_seed_counts)
+        for option_index, options in enumerate(filter_options_list)
+    ]
     workers = max(1, args.workers)
     if workers == 1:
-        combo_progress = tqdm(range(len(filter_options_list)), desc="Computing posteriors")
+        combo_progress = tqdm(combo_jobs, desc="Computing posteriors")
         init_worker_state(
             events=events,
-            answer_count=answer_count,
             p_grid=p_grid,
             sample_count=args.samples,
             seed=args.seed,
@@ -715,23 +767,23 @@ def main() -> None:
             plots_dir=str(plots_dir),
             densities_dir=str(densities_dir),
         )
-        for combo_index in combo_progress:
+        for combo_index, options, seed_count in combo_progress:
             returned_index, combo_entry = compute_combo_entry(
                 combo_index=combo_index,
-                options=filter_options_list[combo_index],
+                options=options,
                 model_ids=model_ids,
+                answer_count=seed_count,
             )
             combo_results[returned_index] = combo_entry
     else:
         ctx = multiprocessing.get_context("spawn")
-        combo_progress = tqdm(total=len(filter_options_list), desc="Computing posteriors")
+        combo_progress = tqdm(total=len(combo_jobs), desc="Computing posteriors")
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=workers,
             mp_context=ctx,
             initializer=init_worker_state,
             initargs=(
                 events,
-                answer_count,
                 p_grid,
                 args.samples,
                 args.seed,
@@ -742,8 +794,8 @@ def main() -> None:
             ),
         ) as executor:
             future_map = {
-                executor.submit(compute_combo_entry, combo_index, options, model_ids): combo_index
-                for combo_index, options in enumerate(filter_options_list)
+                executor.submit(compute_combo_entry, combo_index, options, model_ids, seed_count): combo_index
+                for combo_index, options, seed_count in combo_jobs
             }
             for future in concurrent.futures.as_completed(future_map):
                 returned_index, combo_entry = future.result()
@@ -751,7 +803,7 @@ def main() -> None:
                 combo_progress.update(1)
         combo_progress.close()
 
-    summary_payload["combinations"] = [combo_results[index] for index in range(len(filter_options_list))]
+    summary_payload["combinations"] = [combo_results[index] for index in range(len(combo_jobs))]
 
     write_summary_json(summary_payload, output_dir / "posterior_summary.json")
 
